@@ -1,0 +1,22 @@
+# Local development override (optional)
+# Use: docker-compose -f docker-compose.yml -f docker-compose.local.yml up
+services:
+  bot:
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./generated-cards:/app/generated-cards
+    command: >
+      sh -c "
+        python -m src.health.monitor &
+        python -m src.bot.executor
+      "
+    # For live code reload in dev, you could use watchdog/airgun instead
+  webui:
+    volumes:
+      - ./web:/app/web
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data

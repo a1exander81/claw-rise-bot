@@ -1,0 +1,55 @@
+exchange:
+  bingx:
+    api_key: ${BINGX_API_KEY}
+    api_secret: ${BINGX_API_SECRET}
+    test_mode: ${BINGX_TEST_MODE:false}
+    margin_mode: isolated  # one‑way only
+    default_leverage: 50
+
+risk:
+  margin_percent: 1.5  # 1–2% range; adjustable via UI ±10%
+  max_trades_per_day: 3
+  sl_tolerance_min_pct: 10
+  sl_tolerance_max_pct: 20
+  default_rrr: 2.0
+  max_leverage: 100  # hard cap
+  leverage_warning_threshold_low: 50   # warn if user sets below 50X
+  leverage_warning_threshold_high: 100  # warn if user attempts >100X (blocked)
+
+trading:
+  timeframe: 5m
+  # Auto‑trade sessions in SGT (UTC+8). Use appropriate NY open based on DST.
+  session_times_sgt:
+    NY_MORNING: "21:30"   # NYSE DST (13:30 UTC → 21:30 SGT)
+    #NY_MORNING: "22:30"  # NYSE STD (14:30 UTC → 22:30 SGT) — uncomment when DST ends
+    TOKYO_MORNING: "08:00"   # TSE open 00:00 UTC → 08:00 SGT
+    TOKYO_AFTERNOON: "11:30" # TSE afternoon open 03:30 UTC → 11:30 SGT
+    LONDON_OPEN: "16:00"     # LSE open 08:00 UTC → 16:00 SGT
+  auto_enabled: true
+  manual_anytime: true
+  scalping_note: "Avoid 11:00–13:00 SGT (LSE mid‑day trap) and 16:00–18:00 SGT (NYSE midday lull). Focus on opening rush windows."
+
+ai:
+  model: stepfun/step-3.5-flash
+  confidence_threshold: 65
+  min_rrr: 1.5
+  # StepFun TA skill reference: https://github.com/BingX-API/api-ai-skills
+  bingx_ai_skills_repo: "https://github.com/BingX-API/api-ai-skills"
+
+database:
+  url: sqlite:///data/claw_rise.db
+
+logging:
+  level: INFO
+  dir: logs
+  rotation: 10MB x 5
+
+webui:
+  host: 0.0.0.0
+  port: 8000
+
+health:
+  host: 0.0.0.0
+  port: 8080
+  supervisor_restart_attempts: 3
+  supervisor_alert_retry_delay: 300  # seconds
