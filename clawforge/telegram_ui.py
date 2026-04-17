@@ -387,6 +387,9 @@ def get_market_news():
                 entry = d.entries[0]  # most recent from this feed
                 title = entry.get('title', '').strip()
                 link = entry.get('link', '').strip()
+                # Strip UTM tracking params from URL
+                if '?' in link and 'utm_' in link:
+                    link = link.split('?')[0]
                 if title and link:
                     articles.append((title, link))
         except Exception as e:
@@ -408,7 +411,8 @@ def get_market_news():
             "• (News feeds temporarily unavailable — RSS error)\n"
         )
     
-    lines = [f"• {title} 👉 [Source]({link})" for title, link in uniq]
+    # Format: title + [Source](link) on same line
+    lines = [f"• {title} [Source]({link})" for title, link in uniq]
     header = "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*"
     return f"{header}\n\n" + "\n".join(lines)
 
