@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 import hashlib, hmac
+import feedparser
 
 # ── Load config ──
 ENV_PATH = Path(__file__).parent.parent / "clawmimoto-bot" / ".env"
@@ -130,15 +131,47 @@ def fetch_market_data():
 
 # ── Market News (placeholder — replace with real RSS/API) ──
 def get_market_news():
-    """Placeholder — integrate real news later."""
-    # You can replace this with RSS feed parsing or StepFun summary
-    return (
-        "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*\n\n"
-        "• Macro: Fed signals data-dependent rate decision, markets await CPI print.\n"
-        "• Crypto: Bitcoin holds key support at $72k; ETH2.0 staking hits new high.\n"
-        "• Solana: Network upgrade scheduled for next week, expect volatility.\n"
-        "• Reg Watch: SEC clarifies stance on spot SOL ETF filing."
-    )
+    """Fetch real crypto news from RSS feeds (no caching, no storage)."""
+    feeds = [
+        "https://cointelegraph.com/rss",
+        "https://feeds.coindesk.com/coindesk/bitcoin",
+        "https://decrypt.co/feed",
+        "https://theblock.co/feed",
+    ]
+    articles = []
+    for url in feeds:
+        try:
+            d = feedparser.parse(url)
+            if d.entries:
+                entry = d.entries[0]  # most recent from this feed
+                title = entry.get('title', '').strip()
+                link = entry.get('link', '').strip()
+                # Strip UTM tracking params from URL
+                if '?' in link and 'utm_' in link:
+                    link = link.split('?')[0]
+                if title and link:
+                    articles.append((title, link))
+        except Exception as e:
+            logger.debug(f"RSS fetch error from {url}: {e}")
+    # Deduplicate by title and limit to 4
+    seen = set()
+    uniq = []
+    for title, link in articles:
+        key = title.lower()
+        if key not in seen:
+            seen.add(key)
+            uniq.append((title, link))
+    uniq = uniq[:4]
+    
+    if not uniq:
+        return (
+            "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*\n\n"
+            "• (News feeds temporarily unavailable — RSS error)\n"
+        )
+    
+    lines = [f"• {title} [Source]({link})" for title, link in uniq]
+    header = "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*"
+    return f"{header}\n\n" + "\n".join(lines)
 
 # ── TA: Support/Resistance (simple 24h hi/lo) ──
 def generate_ta():
