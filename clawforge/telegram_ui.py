@@ -79,6 +79,37 @@ def bingx_signed_request(method, endpoint, params=None):
         logger.error(f"BingX API error: {e}")
         return None
 
+
+# ── Multi-Exchange Ticker Fetchers ──
+def get_binance_ticker(symbol):
+    """Fetch ticker from Binance public API (no auth). Symbol format: BTCUSDT."""
+    try:
+        r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=5)
+        if r.status_code == 200:
+            d = r.json()
+            price = float(d.get("lastPrice", 0))
+            change = float(d.get("priceChangePercent", 0))
+            return price, change
+    except Exception as e:
+        logger.debug(f"Binance ticker error for {symbol}: {e}")
+    return None, None
+
+def get_okx_ticker(symbol):
+    """Fetch ticker from OKX public API (no auth). Symbol format: BTC-USDT."""
+    try:
+        r = requests.get(f"https://www.okx.com/api/v5/market/ticker?instId={symbol}", timeout=5)
+        if r.status_code == 200:
+            d = r.json()
+            if d.get("code") == "0" and d.get("data"):
+                data = d["data"][0]
+                price = float(data.get("last", 0))
+                # OKX returns 24h change as a string percentage
+                change = float(data.get("change24h", 0))
+                return price, change
+    except Exception as e:
+        logger.debug(f"OKX ticker error for {symbol}: {e}")
+    return None, None
+
 # ── Balance: BalRealMoc ──
 def get_balance():
     """Return (real_balance, mock_balance)"""
@@ -306,59 +337,79 @@ async def show_gains_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def market_now_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    # Define pairs: (display_label, bingx_symbol, binance_symbol, okx_symbol, coingecko_id)
     pairs = [
-        ('BTC-USDT', 'bitcoin'),
-        ('ETH-USDT', 'ethereum'),
-        ('SOL-USDT', 'solana'),
-        ('BNB-USDT', 'binancecoin'),
+        ("BTC", "BTCUSDT", "BTCUSDT", "BTC-USDT", "bitcoin"),
+        ("ETH", "ETHUSDT", "ETHUSDT", "ETH-USDT", "ethereum"),
+        ("SOL", "SOLUSDT", "SOLUSDT", "SOL-USDT", "solana"),
+        ("BNB", "BNBUSDT", "BNBUSDT", "BNB-USDT", "binancecoin"),
     ]
     message = "📈 Market Now\n\n"
-    # Try BingX first
-    bingx_working = False
-    for pair, cg_id in pairs:
+    sources = {"BingX": False, "Binance": False, "OKX": False, "CoinGecko": False}
+    for label, bingx_sym, binance_sym, okx_sym, cg_id in pairs:
+        price = None
+        change = None
+        source = None
+        # 1. Try BingX
         try:
-            symbol = pair.replace("-", "")
-            ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
+            ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": bingx_sym})
             if ticker and "data" in ticker:
-                data = ticker["data"]
-                price = float(data.get("lastPrice", 0))
-                change = float(data.get("priceChangePercent", 0))
-                message += f"{pair.split('-')[0]}: ${price:,.2f} ({change:+.2f}%)\n"
-                bingx_working = True
-            else:
-                raise ValueError("BingX returned no data")
-        except Exception as e:
-            logger.debug(f"BingX failed for {pair}: {e}")
-            # Will use fallback later if BingX entirely fails
+                d = ticker["data"]
+                price = float(d.get("lastPrice", 0))
+                change = float(d.get("priceChangePercent", 0))
+                source = "BingX"
+                sources["BingX"] = True
+        except Exception:
             pass
-    if not bingx_working:
-        # Fallback to CoinGecko public API (no auth)
-        try:
-            r = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price",
-                params={
-                    "ids": "bitcoin,ethereum,solana,binancecoin",
-                    "vs_currencies": "usd",
-                    "include_24hr_change": "true",
-                },
-                timeout=10,
-            )
-            if r.status_code == 200:
-                cg_data = r.json()
-                for pair, cg_id in pairs:
-                    if cg_id in cg_data:
-                        d = cg_data[cg_id]
-                        price = d.get("usd", 0)
-                        change = d.get("usd_24h_change", 0)
-                        message += f"{pair.split('-')[0]}: ${price:,.2f} ({change:+.2f}%)\n"
-                    else:
-                        message += f"{pair.split('-')[0]}: N/A (CG)\n"
-            else:
-                message += "\nCoinGecko fallback also failed.\n"
-        except Exception as e:
-            logger.error(f"CoinGecko fallback error: {e}")
-            message += "\nAll data sources unreachable.\n"
-    await q.edit_message_text(message, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
+        # 2. Binance fallback
+        if price is None:
+            try:
+                r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={binance_sym}", timeout=5)
+                if r.status_code == 200:
+                    d = r.json()
+                    price = float(d.get("lastPrice", 0))
+                    change = float(d.get("priceChangePercent", 0))
+                    source = "Binance"
+                    sources["Binance"] = True
+            except Exception:
+                pass
+        # 3. OKX fallback
+        if price is None:
+            try:
+                r = requests.get(f"https://www.okx.com/api/v5/market/ticker?instId={okx_sym}", timeout=5)
+                if r.status_code == 200:
+                    d = r.json()
+                    if d.get("code") == "0" and d.get("data"):
+                        d = d["data"][0]
+                        price = float(d.get("last", 0))
+                        change = float(d.get("change24h", 0))
+                        source = "OKX"
+                        sources["OKX"] = True
+            except Exception:
+                pass
+        # 4. CoinGecko fallback (shared across all if all fail)
+        if price is None:
+            try:
+                r = requests.get(
+                    "https://api.coingecko.com/api/v3/simple/price",
+                    params={"ids": cg_id, "vs_currencies": "usd", "include_24hr_change": "true"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    d = r.json().get(cg_id, {})
+                    price = d.get("usd", 0)
+                    change = d.get("usd_24h_change", 0)
+                    source = "CoinGecko"
+                    sources["CoinGecko"] = True
+            except Exception:
+                pass
+        # Append result
+        if price is not None:
+            message += f"{label}: ${price:,.2f} ({change:+.2f}%) [{source}]\n"
+        else:
+            message += f"{label}: Error\n"
+    message += f"\n_Sources: {', '.join([k for k,v in sources.items() if v]) or 'None'}_"
+    await q.edit_message_text(message, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]), parse_mode="Markdown")
 
 # ── Trade Menu ──
 async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
