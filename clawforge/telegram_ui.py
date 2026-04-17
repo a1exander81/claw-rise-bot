@@ -16,6 +16,7 @@ import asyncio
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+import feedparser
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -154,18 +155,6 @@ def format_gains():
     _, _, _, pnl = get_stats()
     pnl_pct = (pnl / 10000 * 100) if pnl else 0  # based on $10k initial
     return f"{pnl_pct:+.1f}% ${pnl:,.2f}"
-
-# ── News fetch (dummy for now — replace with real RSS/API) ──
-def get_market_news():
-    """Return 4+ line market narrative. Placeholder — integrate news API later."""
-    # TODO: fetch from RSS, NewsAPI, or StepFun summary
-    return (
-        "📢 Market Pulse — April 15, 2026\n\n"
-        "• Trump announces new crypto-friendly tax policy, markets rally.\n"
-        "• Bitcoin breaks $71k resistance, ETH2.0 staking inflows surge.\n"
-        "• Solana network outage resolved, price volatility expected.\n"
-        "• Fed Chair hints at pause, gold steady at $2,340/oz."
-    )
 
 # ── AI Scan ──
 def call_stepfun_skill(prompt):
@@ -383,13 +372,45 @@ def fetch_market_data():
     return "\n".join(lines), ", ".join(set(sources)) if sources else "None"
 
 def get_market_news():
-    return (
-        "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*\n\n"
-        "• Macro: Fed signals data-dependent rate decision, markets await CPI print.\n"
-        "• Crypto: Bitcoin holds key support at $72k; ETH2.0 staking hits new high.\n"
-        "• Solana: Network upgrade scheduled for next week, expect volatility.\n"
-        "• Reg Watch: SEC clarifies stance on spot SOL ETF filing."
-    )
+    """Fetch real crypto news from RSS feeds (no caching, no storage)."""
+    feeds = [
+        "https://cointelegraph.com/rss",
+        "https://feeds.coindesk.com/coindesk/bitcoin",
+        "https://decrypt.co/feed",
+        "https://theblock.co/feed",
+    ]
+    articles = []
+    for url in feeds:
+        try:
+            d = feedparser.parse(url)
+            if d.entries:
+                entry = d.entries[0]  # most recent from this feed
+                title = entry.get('title', '').strip()
+                link = entry.get('link', '').strip()
+                if title and link:
+                    articles.append((title, link))
+        except Exception as e:
+            logger.debug(f"RSS fetch error from {url}: {e}")
+    # Deduplicate by title and limit to 4
+    seen = set()
+    uniq = []
+    for title, link in articles:
+        key = title.lower()
+        if key not in seen:
+            seen.add(key)
+            uniq.append((title, link))
+    uniq = uniq[:4]
+    
+    if not uniq:
+        # Fallback placeholder if all feeds fail
+        return (
+            "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*\n\n"
+            "• (News feeds temporarily unavailable — RSS error)\n"
+        )
+    
+    lines = [f"• {title} 👉 [Source]({link})" for title, link in uniq]
+    header = "📢 *Market Pulse — " + datetime.now(timezone.utc).strftime("%b %d, %Y") + "*"
+    return f"{header}\n\n" + "\n".join(lines)
 
 def generate_ta():
     lines = []
