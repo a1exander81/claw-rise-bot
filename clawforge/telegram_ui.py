@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ClawTrader Telegram UI — Revised per user specs
+Clawmimoto Telegram UI — Revised per user specs
 Main Menu with news, BalRealMoc, ModeReal, wins, Gains
 SESSION: 2x2 grid with leverage/margin controls, AI scan, pair details
 POSITIONS: list with share PNL
@@ -283,7 +283,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
         [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
     ]
-    await update.message.reply_text(f"🏠 **ClawTrader Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(f"🏠 **Clawmimoto Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
 
 async def main_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -298,7 +298,7 @@ async def main_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
         [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
     ]
-    await q.edit_message_text(f"🏠 **ClawTrader Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(f"🏠 **Clawmimoto Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
 
 async def toggle_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -799,7 +799,7 @@ def main():
     app.add_handler(CallbackQueryHandler(market_now_cb, pattern="^market_now$"))
     app.add_handler(CallbackQueryHandler(confirm_exec_cb, pattern="^confirm_"))
     app.add_error_handler(error_handler)
-    logger.info("Starting ClawTrader Telegram UI...")
+    logger.info("Starting Clawmimoto Telegram UI...")
     # Start background snapshot thread (every 4 hours)
     def _snapshot_thread():
         """Runs in separate thread; uses synchronous requests to Telegram API."""
