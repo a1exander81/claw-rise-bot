@@ -248,6 +248,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [wins_button(), gains_button()],
         [InlineKeyboardButton("📈 TRADE MENU", callback_data="trade_menu")],
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
+        [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
     ]
     await update.message.reply_text(f"🏠 **ClawTrader Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -262,6 +263,7 @@ async def main_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [wins_button(), gains_button()],
         [InlineKeyboardButton("📈 TRADE MENU", callback_data="trade_menu")],
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
+        [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
     ]
     await q.edit_message_text(f"🏠 **ClawTrader Command Center**\n\n{news}", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -298,6 +300,65 @@ async def show_gains_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pnl_pct = (pnl / 10000 * 100) if pnl else 0
     text = f"💰 **Realized Gains**\n\n{pnl_pct:+.1f}%\n${pnl:,.2f}"
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="main")]]))
+
+
+# ── Market Now ──
+async def market_now_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    pairs = [
+        ('BTC-USDT', 'bitcoin'),
+        ('ETH-USDT', 'ethereum'),
+        ('SOL-USDT', 'solana'),
+        ('BNB-USDT', 'binancecoin'),
+    ]
+    message = "📈 Market Now\n\n"
+    # Try BingX first
+    bingx_working = False
+    for pair, cg_id in pairs:
+        try:
+            symbol = pair.replace("-", "")
+            ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
+            if ticker and "data" in ticker:
+                data = ticker["data"]
+                price = float(data.get("lastPrice", 0))
+                change = float(data.get("priceChangePercent", 0))
+                message += f"{pair.split('-')[0]}: ${price:,.2f} ({change:+.2f}%)\n"
+                bingx_working = True
+            else:
+                raise ValueError("BingX returned no data")
+        except Exception as e:
+            logger.debug(f"BingX failed for {pair}: {e}")
+            # Will use fallback later if BingX entirely fails
+            pass
+    if not bingx_working:
+        # Fallback to CoinGecko public API (no auth)
+        try:
+            r = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={
+                    "ids": "bitcoin,ethereum,solana,binancecoin",
+                    "vs_currencies": "usd",
+                    "include_24hr_change": "true",
+                },
+                timeout=10,
+            )
+            if r.status_code == 200:
+                cg_data = r.json()
+                for pair, cg_id in pairs:
+                    if cg_id in cg_data:
+                        d = cg_data[cg_id]
+                        price = d.get("usd", 0)
+                        change = d.get("usd_24h_change", 0)
+                        message += f"{pair.split('-')[0]}: ${price:,.2f} ({change:+.2f}%)\n"
+                    else:
+                        message += f"{pair.split('-')[0]}: N/A (CG)\n"
+            else:
+                message += "\nCoinGecko fallback also failed.\n"
+        except Exception as e:
+            logger.error(f"CoinGecko fallback error: {e}")
+            message += "\nAll data sources unreachable.\n"
+    await q.edit_message_text(message, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
 
 # ── Trade Menu ──
 async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -599,6 +660,7 @@ def main():
     app.add_handler(CallbackQueryHandler(close_position_cb, pattern="^close_"))
     app.add_handler(CallbackQueryHandler(share_pnl_cb, pattern="^share_"))
     app.add_handler(CallbackQueryHandler(execute_cb, pattern="^execute$"))
+    app.add_handler(CallbackQueryHandler(market_now_cb, pattern="^market_now$"))
     app.add_handler(CallbackQueryHandler(confirm_exec_cb, pattern="^confirm_"))
     app.add_error_handler(error_handler)
     logger.info("Starting ClawTrader Telegram UI...")
