@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 import hashlib, hmac
 
 # ── Load config ──
-ENV_PATH = Path(__file__).parent.parent / "claw-rise-bot" / ".env"
+ENV_PATH = Path(__file__).parent.parent / "clawmimoto-bot" / ".env"
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH, override=True)
 
