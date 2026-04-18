@@ -876,14 +876,14 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     
     if state.get("awaiting_pair_input"):
         if "/" not in text:
-            await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
+            await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
             return
         if validate_pair_on_bingx(text):
             user_state[chat_id]["selected_pair"] = {"symbol": text, "direction": "LONG"}
             state["awaiting_pair_input"] = False
             await update.message.reply_text(f"✅ Pair {text} added!\n\nUse /start to continue.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 MAIN", callback_data="main")]]))
         else:
-            await update.message.reply_text("❌ Pair not on BingX. Try again.")
+            await update.message.reply_text("❌ Pair not on BingX. Try again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
 
 def validate_pair_on_bingx(pair):
     symbol = pair.replace("/", "").upper()
