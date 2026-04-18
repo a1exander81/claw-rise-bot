@@ -293,7 +293,9 @@ def get_bingx_hot_pairs(limit=5):
             pairs = []
             for item in data["data"][:limit]:
                 symbol = item.get("symbol", "").upper()
-                pairs.append(f"{symbol}/USDT")
+                # BingX uses BTC-USDT format; convert to BTC/USDT for display
+                symbol = symbol.replace("-", "/")
+                pairs.append(symbol)
             logger.info(f"BingX hot pairs: {pairs}")
             return pairs
     except Exception as e:
@@ -806,10 +808,10 @@ async def market_now_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     # Define pairs: (display_label, bingx_symbol, binance_symbol, okx_symbol, coingecko_id)
     pairs = [
-        ("BTC", "BTCUSDT", "BTCUSDT", "BTC-USDT", "bitcoin"),
-        ("ETH", "ETHUSDT", "ETHUSDT", "ETH-USDT", "ethereum"),
-        ("SOL", "SOLUSDT", "SOLUSDT", "SOL-USDT", "solana"),
-        ("BNB", "BNBUSDT", "BNBUSDT", "BNB-USDT", "binancecoin"),
+        ("BTC", "BTC-USDT", "BTCUSDT", "BTC-USDT", "bitcoin"),
+        ("ETH", "ETH-USDT", "ETHUSDT", "ETH-USDT", "ethereum"),
+        ("SOL", "SOL-USDT", "SOLUSDT", "SOL-USDT", "solana"),
+        ("BNB", "BNB-USDT", "BNBUSDT", "BNB-USDT", "binancecoin"),
     ]
     message = "📈 Market Now\n\n"
     sources = {"BingX": False, "Binance": False, "OKX": False, "CoinGecko": False}
@@ -1047,7 +1049,7 @@ async def add_pair_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = update.callback_query
     await q.answer()
-    top = get_bingx_top_pairs(limit=10)
+    top = get_bingx_hot_pairs(limit=10)
     kb = []
     for i in range(0, len(top), 2):
         row = []
