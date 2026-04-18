@@ -846,12 +846,10 @@ def extract_pair_from_bingx_url(url):
         from urllib.parse import urlparse
         parsed = urlparse(url)
         path_parts = parsed.path.strip('/').split('/')
-        # Look for 'perpetual' segment and take next
-        if 'perpetual' in path_parts:
-            idx = path_parts.index('perpetual')
-            if idx + 1 < len(path_parts):
-                pair_raw = path_parts[idx + 1]
-                # Convert GENIUS-USDT -> GENIUS/USDT
+        # Look for 'perpetual' segment (case-insensitive) and take next
+        for i, part in enumerate(path_parts):
+            if part.lower() == 'perpetual' and i + 1 < len(path_parts):
+                pair_raw = path_parts[i + 1]
                 pair = pair_raw.replace('-', '/').upper()
                 return pair
         # Fallback: last path segment
