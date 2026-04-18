@@ -22,6 +22,64 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ── Trading Trivia Facts ──
+TRADING_FACTS = [
+    "📜 **Fact:** The first recorded stock exchange was in Amsterdam, 1602 — the Dutch East India Company.",
+    "🔥 **Fact:** On Black Monday (1987), the Dow dropped 22% in a single day — still the biggest one-day % drop.",
+    "🐋 **Fact:** About 90% of retail traders lose money. The 10% who win treat it like a business, not a casino.",
+    "⏰ **Fact:** The NYSE opens at 9:30 AM ET — that's when the smart money moves. The last 30 mins are often the wildest.",
+    "💡 **Fact:** Most pros use 1-2% risk per trade. If you risk more, you're gambling, not trading.",
+    "🌊 **Fact:** Crypto never sleeps — 24/7/365. That's why sleep management is a real edge for degens.",
+    "🎯 **Fact:** The '2% rule' (never risk more than 2% per trade) has saved more accounts than any indicator.",
+    "📈 **Fact:** The 'Greater Fool Theory' describes most crypto pumps: someone's always the greater fool.",
+    "⚡ **Fact:** The average lifespan of a crypto token is 9 months. 99% of altcoins go to zero.",
+    "🏦 **Fact:** In 2023, Binance processed $14 trillion in trading volume — more than the GDP of China.",
+    "🧠 **Fact:** Trading is 80% psychology. Your brain is your biggest enemy — FOMO, FUD, revenge trading.",
+    "📊 **Fact:** The 'Golden Cross' (50 MA > 200 MA) is a classic bull signal — but it's often a late indicator.",
+    "💸 **Fact:** The 'Fed Put' isn't real — but markets believe in it. When the Fed steps in, everything rallies.",
+    "🔢 **Fact:** The '80-20 rule' applies: 80% of your gains come from 20% of your trades. Quality > quantity.",
+    "🛡️ **Fact:** 'Not your keys, not your coins' — but also, 'Not your keys, no trading.' Exchanges are banks now."
+]
+
+# ── Trading Trivia Facts ──
+TRADING_FACTS = [
+    "📜 **Fact:** The first recorded stock exchange was in Amsterdam, 1602 — the Dutch East India Company.",
+    "🔥 **Fact:** On Black Monday (1987), the Dow dropped 22% in a single day — still the biggest one-day % drop.",
+    "🐋 **Fact:** About 90% of retail traders lose money. The 10% who win treat it like a business, not a casino.",
+    "⏰ **Fact:** The NYSE opens at 9:30 AM ET — that's when the smart money moves. The last 30 mins are often the wildest.",
+    "💡 **Fact:** Most pros use 1-2% risk per trade. If you risk more, you're gambling, not trading.",
+    "🌊 **Fact:** Crypto never sleeps — 24/7/365. That's why sleep management is a real edge for degens.",
+    "🎯 **Fact:** The '2% rule' (never risk more than 2% per trade) has saved more accounts than any indicator.",
+    "📈 **Fact:** The 'Greater Fool Theory' describes most crypto pumps: someone's always the greater fool.",
+    "⚡ **Fact:** The average lifespan of a crypto token is 9 months. 99% of altcoins go to zero.",
+    "🏦 **Fact:** In 2023, Binance processed $14 trillion in trading volume — more than the GDP of China.",
+    "🧠 **Fact:** Trading is 80% psychology. Your brain is your biggest enemy — FOMO, FUD, revenge trading.",
+    "📊 **Fact:** The 'Golden Cross' (50 MA > 200 MA) is a classic bull signal — but it's often a late indicator.",
+    "💸 **Fact:** The 'Fed Put' isn't real — but markets believe in it. When the Fed steps in, everything rallies.",
+    "🔢 **Fact:** The '80-20 rule' applies: 80% of your gains come from 20% of your trades. Quality > quantity.",
+    "🛡️ **Fact:** 'Not your keys, not your coins' — but also, 'Not your keys, no trading.' Exchanges are banks now."
+]
+
+async def cycle_facts_on_message(msg, title: str, interval: int = 4):
+    """Edit `msg` with a new trading fact every `interval` seconds until cancelled."""
+    facts = TRADING_FACTS.copy()
+    random.shuffle(facts)
+    idx = 0
+    try:
+        while True:
+            fact = facts[idx % len(facts)]
+            idx += 1
+            try:
+                await msg.edit_text(
+                    f"{title}\n\n{fact}\n\n_Still working..._",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass  # Message deleted or unavailable
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
+
 # ── Load config ──
 ENV_PATH = Path(__file__).parent.parent / ".env"
 if ENV_PATH.exists():
@@ -1044,12 +1102,27 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /scan command: run AI scan asynchronously and send results."""
     chat_id = update.effective_chat.id
     # Acknowledge immediately
-    status_msg = await update.message.reply_text("🔍 **Scanning market...**\n\nFetching BingX hot pairs, analyzing 5M charts, order book, sentiment...", parse_mode="Markdown")
+    status_msg = await update.message.reply_text(
+        "🔍 **Scanning market...**\n\nFetching BingX hot pairs, analyzing 5M charts, order book, sentiment...",
+        parse_mode="Markdown"
+    )
     
-    # Run scan in background to avoid timeout
     async def do_scan():
         try:
-            setups = ai_scan_pairs()
+            # Start facts cycling task
+            facts_task = asyncio.create_task(cycle_facts_on_message(status_msg, "🔍 **Scanning market..."))
+            
+            # Run blocking scan in executor to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            setups = await loop.run_in_executor(None, ai_scan_pairs)
+            
+            # Cancel facts task
+            facts_task.cancel()
+            try:
+                await facts_task
+            except:
+                pass
+            
             if not setups:
                 try:
                     await status_msg.edit_text("❌ **Scan failed** — No pairs returned.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
@@ -1078,7 +1151,20 @@ async def refresh_scan_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     async def do_refresh():
         try:
-            setups = ai_scan_pairs()
+            # Start facts cycling task
+            facts_task = asyncio.create_task(cycle_facts_on_message(query.message, "🔄 **Refreshing scan..."))
+            
+            # Run blocking scan in executor
+            loop = asyncio.get_event_loop()
+            setups = await loop.run_in_executor(None, ai_scan_pairs)
+            
+            # Cancel facts task
+            facts_task.cancel()
+            try:
+                await facts_task
+            except:
+                pass
+            
             user_state[chat_id]["selected_pairs"] = setups
             try:
                 await query.message.delete()
