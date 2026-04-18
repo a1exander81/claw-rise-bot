@@ -635,18 +635,26 @@ async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(f"⏰ **Select Trading Mode**\n\nBalance: {bal}", reply_markup=InlineKeyboardMarkup(kb))
 
 async def scan_pair_prompt_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Prompt user to enter a pair for custom AI scan."""
+    """Show popular pair buttons for custom AI scan."""
     q = update.callback_query
     await q.answer()
-    chat_id = q.message.chat_id
-    user_state[chat_id]["awaiting_custom_pair"] = True
+    # Predefined popular pairs (Binance symbols)
+    popular_pairs = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "DOGE/USDT", "ADA/USDT", "AVAX/USDT"]
+    # 2x2 grid for all 8 (4 rows)
+    kb = []
+    for i in range(0, len(popular_pairs), 2):
+        row = []
+        for p in popular_pairs[i:i+2]:
+            label = p.replace("/", "")
+            row.append(InlineKeyboardButton(label, callback_data=f"custom_scan_{p}"))
+        kb.append(row)
     await q.edit_message_text(
-        "🔍 **Custom Pair Scan**\n\n"
-        "Type a pair to analyze (e.g. `BTC/USDT`).\n"
-        "I'll run AI analysis and show details for execution.",
+        "🔍 **Select Pair to Scan**\n\nChoose a popular pair:",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]])
+        reply_markup=InlineKeyboardMarkup(kb)
     )
+
+# ── Session Mode ──
 
 # ── Session Mode ─-
 async def session_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -775,54 +783,16 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.upper()
     state = user_state.get(chat_id, {})
-    # Handle custom pair scan request
-    if state.get("awaiting_custom_pair"):
+    if state.get("awaiting_pair_input"):
         if "/" not in text:
             await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
             return
-        # Validate pair exists on BingX (or Binance fallback)
-        symbol = text.replace("/", "")
-        ticker_data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
-        # Fallback to Binance ticker
-        if not ticker_data or "data" not in ticker_data:
-            try:
-                r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=5)
-                if r.status_code != 200:
-                    await update.message.reply_text("❌ Pair not found on BingX/Binance.")
-                    return
-            except:
-                await update.message.reply_text("❌ Pair not found on BingX/Binance.")
-                return
-        # Run AI analysis
-        result = analyze_pair(text)
-        user_state[chat_id]["selected_pairs"] = [result]
-        state["awaiting_custom_pair"] = False
-        # Show detail view (similar to pair_detail_cb)
-        real, mock = get_balance()
-        bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
-        margin_val = (10000 if state.get("trade_mode", "MOCK") == "MOCK" else (real or 10000)) * (state.get("margin", 1) / 100)
-        conf = result["confidence"]
-        greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
-        kb = [
-            [InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")],
-        ]
-        # Add SET ALERT button with current price
-        try:
-            cur_price, _ = get_binance_ticker(symbol)
-            if cur_price and cur_price > 0:
-                kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
-        except: pass
-        kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")])
-        text = (f"📊 {result['symbol']} {result['direction']} {state.get('trade_mode','MOCK')}\n\n"
-                f"Balance: {bal}\n"
-                f"Price: {result['change']:+.2f}%\n"
-                f"Reasons: {' | '.join(result['reasons'])}\n"
-                f"Leverage: {state.get('leverage',50)}x  |  Margin: {state.get('margin',1)}%  (${margin_val:,.0f})\n"
-                f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
-                f"Confidence: {conf}% {greens} 🦞")
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
-        return
-    if state.get("awaiting_pair_input"):
+        if validate_pair_on_bingx(text):
+            user_state[chat_id]["selected_pair"] = {"symbol": text, "direction": "LONG"}
+            state["awaiting_pair_input"] = False
+            await update.message.reply_text(f"✅ Pair {text} added!\n\nUse /start to continue.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 MAIN", callback_data="main")]]))
+        else:
+            await update.message.reply_text("❌ Pair not on BingX. Try again.")
         if "/" not in text:
             await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
             return
@@ -1056,6 +1026,46 @@ async def alert_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data=f"pair_{pair}")]])
     )
 
+# ── Custom Pair Scan ──
+async def custom_scan_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle custom pair scan button press."""
+    q = update.callback_query
+    await q.answer()
+    # Extract pair from callback data: custom_scan_BTC/USDT
+    pair = q.data.replace("custom_scan_", "")
+    
+    # Run AI analysis
+    result = analyze_pair(pair)
+    chat_id = q.message.chat_id
+    user_state[chat_id]["selected_pairs"] = [result]
+    
+    # Build detail view (same as pair_detail_cb)
+    state = get_state(chat_id)
+    real, mock = get_balance()
+    bal = format_balance(real, mock, state["trade_mode"])
+    margin_val = (10000 if state["trade_mode"] == "MOCK" else (real or 10000)) * (state["margin"] / 100)
+    conf = result["confidence"]
+    greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+    text = (f"📊 {result['symbol']} {result['direction']} {state['trade_mode']}\n\n"
+            f"Balance: {bal}\n"
+            f"Price: {result['change']:+.2f}%\n"
+            f"Reasons: {' | '.join(result['reasons'])}\n"
+            f"Leverage: {state['leverage']}x  |  Margin: {state['margin']}%  (${margin_val:,.0f})\n"
+            f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
+            f"Confidence: {conf}% {greens} 🦞")
+    kb = [
+        [InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")],
+    ]
+    # Add SET ALERT button with current price
+    symbol_clean = result['symbol'].replace('/', '')
+    try:
+        cur_price, _ = get_binance_ticker(symbol_clean)
+        if cur_price and cur_price > 0:
+            kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
+    except: pass
+    kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")])
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
 # ── Error handler ──
 async def error_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception: {ctx.error}", exc_info=ctx.error)
@@ -1082,6 +1092,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_gains_cb, pattern="^show_gains$"))
     app.add_handler(CallbackQueryHandler(trade_menu_cb, pattern="^trade_menu$"))
     app.add_handler(CallbackQueryHandler(scan_pair_prompt_cb, pattern="^scan_pair_prompt$"))
+    app.add_handler(CallbackQueryHandler(custom_scan_cb, pattern=r"^custom_scan_"))
     app.add_handler(CallbackQueryHandler(session_mode_cb, pattern="^session_mode$"))
     app.add_handler(CallbackQueryHandler(session_adjust_cb, pattern="^(lev|mar)_(up|down)$"))
     app.add_handler(CallbackQueryHandler(ai_scan_cb, pattern="^ai_scan$"))
