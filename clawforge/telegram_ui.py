@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import requests
 import asyncio
+import time
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,14 +58,18 @@ def api_get(endpoint):
         return None
 
 def api_post(endpoint, payload=None):
+    """POST to Freqtrade API. Returns (success: bool, error_msg: str)."""
     try:
         r = requests.post(f"{API_URL}{endpoint}", json=payload or {}, headers=AUTH_HEADER, timeout=10)
-        if r.status_code != 200:
-            logger.error(f"API POST {endpoint} failed: {r.status_code} — {r.text[:200]}")
-        return r.status_code == 200
+        if r.status_code == 200:
+            return True, ""
+        else:
+            error_msg = f"{r.status_code} — {r.text[:200]}"
+            logger.error(f"API POST {endpoint} failed: {error_msg}")
+            return False, error_msg
     except Exception as e:
         logger.error(f"API POST {endpoint} failed: {e}")
-        return False
+        return False, str(e)
 
 # ── BingX API ──
 def bingx_signed_request(method, endpoint, params=None):
@@ -261,7 +266,8 @@ def format_gains():
     return f"{pnl_pct:+.1f}% ${pnl:,.2f}"
 
 # ── AI Scan ──
-def call_stepfun_skill(prompt):
+def call_stepfun_skill(prompt, retries=1):
+    """Call StepFun API with timeout and simple retry."""
     if not STEPFUN_API_KEY:
         return None
     headers = {"Authorization": f"Bearer {STEPFUN_API_KEY}", "Content-Type": "application/json"}
@@ -273,12 +279,16 @@ def call_stepfun_skill(prompt):
         ],
         "temperature": 0.7
     }
-    try:
-        r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=5)
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error(f"StepFun error: {e}")
+    for attempt in range(retries + 1):
+        try:
+            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"]
+            logger.warning(f"StepFun HTTP {r.status_code}: {r.text[:100]}")
+        except Exception as e:
+            logger.error(f"StepFun error (attempt {attempt+1}): {e}")
+        if attempt < retries:
+            time.sleep(1)
     return None
 
 def ai_scan_pairs(custom_pairs=None):
@@ -829,7 +839,8 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"❌ **Analysis failed** for {pair}\n\n"
                     f"Error: {str(e)[:200]}\n\n"
                     f"Try again later or use /scan for hot pairs.",
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]])
                 )
                 return
             # Show detail view
@@ -860,7 +871,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
             return
         else:
-            await update.message.reply_text("❌ Could not extract pair from URL.")
+            await update.message.reply_text("❌ Could not extract pair from URL.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
             return
     
     if state.get("awaiting_pair_input"):
@@ -948,7 +959,7 @@ async def close_position_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     trade_id = q.data.split("_", 1)[1]
-    success = api_post(f"/api/v1/trades/{trade_id}/close")
+    success, _ = api_post(f"/api/v1/trades/{trade_id}/close")
     if success:
         await q.edit_message_text("✅ Position closed!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ POSITIONS", callback_data="positions")]]))
     else:
@@ -1014,15 +1025,18 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "dry_run": state["trade_mode"] == "MOCK"
     }
     logger.info(f"Executing trade: {payload}")
-    result = api_post("/api/v1/forcebuy", payload)
-    if result:
+    success, error_msg = api_post("/api/v1/forcebuy", payload)
+    if success:
         msg = "✅ **Trade executed!**"
         if state["trade_mode"] == "MOCK":
             msg += "\n\n_MOCK mode — no real funds used_"
         msg += "\n\nCheck POSITIONS for status."
     else:
-        msg = "❌ **Execution failed**\n\nPossible reasons:\n• Freqtrade API error\n• Invalid pair/params\n• Exchange down"
-        logger.error(f"Trade execution failed for {p['symbol']}")
+        msg = "❌ **Execution failed**\n\n"
+        if error_msg:
+            msg += f"**Error:** `{error_msg}`\n\n"
+        msg += "Possible reasons:\n• Freqtrade API error\n• Invalid pair/params\n• Exchange down"
+        logger.error(f"Trade execution failed for {p['symbol']}: {error_msg}")
     await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
 
 # ── Scan Command ──
