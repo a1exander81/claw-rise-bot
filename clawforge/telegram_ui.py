@@ -185,6 +185,10 @@ def get_user_tier(user_id: int) -> str:
         return "whitelisted"
     return "public"
 
+def is_admin(user_id: int) -> bool:
+    """Check if user_id is the admin."""
+    return user_id == ADMIN_ID
+
 async def enforce_access(update: Update, context: ContextTypes.DEFAULT_TYPE, allow_admin: bool = True,
                          allow_whitelisted: bool = True, require_channel: bool = True) -> bool:
     """
@@ -419,6 +423,11 @@ def is_pair_valid_on_bingx(pair: str) -> bool:
         logger.debug(f"Binance fallback validation error for {pair}: {e}")
     return False
 
+def is_pair_valid_for_user(pair: str, user_id: int) -> bool:
+    """Admin bypass: admins can use any pair without API validation."""
+    if is_admin(user_id):
+        return True
+    return is_pair_valid_on_bingx(pair)
 
 def get_okx_ticker(symbol):
     """Fetch ticker from OKX public API (no auth). Symbol format: BTC-USDT."""
@@ -999,8 +1008,9 @@ async def pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {p.get('rrr', 2.0):.1f}\n"
             f"Confidence: {conf}% {greens} 🦞")
     kb = []
-    # Only show EXECUTE if pair is valid on exchange
-    if is_pair_valid_on_bingx(p['symbol']):
+    # Only show EXECUTE if pair is valid on exchange (admins bypass)
+    user_id = update.effective_user.id
+    if is_pair_valid_for_user(p['symbol'], user_id):
         kb.append([InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")])
     # Add SET ALERT button with current price
     try:
@@ -1076,8 +1086,9 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         print(f"[DEBUG] Extracted pair: {pair}")
         logger.info(f"Extracted pair: {pair}")
         if pair:
-            # Validate pair exists on BingX (our exchange)
-            if not is_pair_valid_on_bingx(pair):
+            # Validate pair exists on BingX (admins bypass)
+            user_id = update.effective_user.id
+            if not is_pair_valid_for_user(pair, user_id):
                 await update.message.reply_text(
                     f"❌ **Pair not available**\n\n{pair} is not listed on BingX (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
                     parse_mode='Markdown',
@@ -1139,8 +1150,9 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if "binance.com" in text_lower and "/futures/" in text_lower:
         pair = extract_pair_from_binance_url(text)
         if pair:
-            # Validate pair exists on BingX (our exchange)
-            if not is_pair_valid_on_bingx(pair):
+            # Validate pair exists on BingX (admins bypass)
+            user_id = update.effective_user.id
+            if not is_pair_valid_for_user(pair, user_id):
                 await update.message.reply_text(
                     f"❌ **Pair not available**\n\n{pair} is not listed on BingX (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
                     parse_mode='Markdown',
@@ -1398,8 +1410,9 @@ async def execute_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("❌ No pair selected. Use SESSION MODE first.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
         return
     p = pairs[0]  # use first selected
-    # Validate pair is available on exchange before showing confirm screen
-    if not is_pair_valid_on_bingx(p['symbol']):
+    # Validate pair is available on exchange before showing confirm screen (admins bypass)
+    user_id = q.from_user.id
+    if not is_pair_valid_for_user(p['symbol'], user_id):
         await q.edit_message_text(
             f"❌ **Pair not available**\n\n{p['symbol']} is not listed on BingX (validation failed).\n\nSelect a valid pair and try again.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
@@ -1429,8 +1442,9 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("❌ No pair selected.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
         return
     p = pairs[0]
-    # Validate pair is available on exchange before executing
-    if not is_pair_valid_on_bingx(p['symbol']):
+    # Validate pair is available on exchange before executing (admins bypass)
+    user_id = q.from_user.id
+    if not is_pair_valid_for_user(p['symbol'], user_id):
         await q.edit_message_text(
             f"❌ **Cannot execute**\n\n{p['symbol']} is not available on the exchange.\n\nSelect a valid pair and try again.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
@@ -1630,8 +1644,9 @@ async def custom_scan_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
             f"Confidence: {conf}% {greens} 🦞")
     kb = []
-    # Only show EXECUTE if pair is valid on exchange
-    if is_pair_valid_on_bingx(result['symbol']):
+    # Only show EXECUTE if pair is valid on exchange (admins bypass)
+    user_id = q.from_user.id
+    if is_pair_valid_for_user(result['symbol'], user_id):
         kb.append([InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")])
     # Add SET ALERT button with current price
     if cur_price and cur_price > 0:
