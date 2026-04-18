@@ -270,7 +270,7 @@ def api_post(endpoint, payload=None):
 def bingx_signed_request(method, endpoint, params=None):
     if not BINGX_API_KEY or not BINGX_API_SECRET:
         return None
-    base_url = "https://openapi.bingx.com"
+    base_url = "https://open-api.bingx.com"
     url = f"{base_url}{endpoint}"
     if params:
         sorted_params = sorted(params.items())
