@@ -143,6 +143,42 @@ def get_bingx_klines(symbol, interval="5m", limit=50):
         logger.debug(f"Binance klines fallback error: {e}")
     return None
 
+# ── Single Pair Analyzer ──
+def analyze_pair(pair):
+    """Analyze a single pair (format 'BTC/USDT') and return result dict."""
+    symbol = pair.replace("/", "")
+    klines_data = get_bingx_klines(symbol, interval="5m", limit=50)
+    change = 0
+    volume = 0
+    if klines_data and "data" in klines_data and len(klines_data["data"]) >= 2:
+        closes = [float(k["close"]) for k in klines_data["data"][-10:]]
+        if len(closes) >= 2:
+            change = (closes[-1] - closes[-2]) / closes[-2] * 100
+        volume = sum(float(k["volume"]) for k in klines_data["data"][-5:])
+    prompt = f"Scalp analysis for {pair} 5M: change {change:.2f}%, volume {volume:.0f}. Give: direction (LONG/SHORT), confidence 80-90%, RRR 1.5-3.0, 3 reasons."
+    ai_text = call_stepfun_skill(prompt)
+    direction = "LONG" if change >= 0 else "SHORT"
+    confidence = 85 if change >= 0 else 75
+    reasons = ["High volume", "Momentum", "AI signal"]
+    if ai_text:
+        ai_lower = ai_text.lower()
+        if "short" in ai_lower:
+            direction = "SHORT"
+        if "confidence" in ai_lower:
+            try:
+                confidence = int(''.join(filter(str.isdigit, ai_text.split("confidence")[1].split("%")[0])))
+            except: pass
+        reasons = [line.strip("- * ") for line in ai_text.split('\n') if line.strip()][:3] or reasons
+    return {
+        "symbol": pair,
+        "direction": direction,
+        "change": round(change, 2),
+        "volume": volume,
+        "confidence": confidence,
+        "reasons": reasons,
+        "entry": 0, "sl": 0, "tp": 0, "rrr": 2.0
+    }
+
 # ── Multi-Exchange Ticker Fetchers ──
 def get_binance_ticker(symbol):
     """Fetch ticker from Binance public API (no auth). Symbol format: BTCUSDT."""
@@ -236,11 +272,14 @@ def call_stepfun_skill(prompt):
         logger.error(f"StepFun error: {e}")
     return None
 
-def ai_scan_pairs():
-    """Scan hot pairs, get klines (with fallback), call StepFun, return top 4."""
-    hot = get_bingx_hot_pairs(limit=6)  # only fetch 6 pairs for speed
+def ai_scan_pairs(custom_pairs=None):
+    """Scan hot pairs or custom list, get klines (with fallback), call StepFun, return top 4."""
+    pairs_to_scan = custom_pairs if custom_pairs else get_bingx_hot_pairs(limit=6)
     results = []
-    for pair in hot:
+    for pair in pairs_to_scan:
+        # Ensure format
+        if "/" not in pair:
+            pair = f"{pair}/USDT"
         symbol = pair.replace("/", "")
         klines_data = get_bingx_klines(symbol, interval="5m", limit=50)
         change = 0
@@ -253,7 +292,7 @@ def ai_scan_pairs():
         # AI reasoning
         prompt = f"Scalp analysis for {pair} 5M: change {change:.2f}%, volume {volume:.0f}. Give: direction (LONG/SHORT), confidence 80-90%, RRR 1.5-3.0, 3 reasons."
         ai_text = call_stepfun_skill(prompt)
-        direction = "LONG"
+        direction = "LONG" if change >= 0 else "SHORT"
         confidence = 85 if change >= 0 else 75
         reasons = ["High volume", "Momentum", "AI signal"]
         entry = 0; sl = 0; tp = 0; rrr = 0
@@ -264,8 +303,7 @@ def ai_scan_pairs():
             if "confidence" in ai_lower:
                 try:
                     confidence = int(''.join(filter(str.isdigit, ai_text.split("confidence")[1].split("%")[0])))
-                except:
-                    pass
+                except: pass
             reasons = [line.strip("- * ") for line in ai_text.split('\n') if line.strip()][:3] or reasons
         results.append({
             "symbol": pair,
@@ -591,11 +629,26 @@ async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("🤖 SESSION MODE", callback_data="session_mode")],
         [InlineKeyboardButton("👷 MANUAL MODE", callback_data="manual_mode")],
+        [InlineKeyboardButton("🔍 SCAN PAIR", callback_data="scan_pair_prompt")],
         [InlineKeyboardButton("⬅️ BACK", callback_data="main")],
     ]
     await q.edit_message_text(f"⏰ **Select Trading Mode**\n\nBalance: {bal}", reply_markup=InlineKeyboardMarkup(kb))
 
-# ── Session Mode ──
+async def scan_pair_prompt_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Prompt user to enter a pair for custom AI scan."""
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    user_state[chat_id]["awaiting_custom_pair"] = True
+    await q.edit_message_text(
+        "🔍 **Custom Pair Scan**\n\n"
+        "Type a pair to analyze (e.g. `BTC/USDT`).\n"
+        "I'll run AI analysis and show details for execution.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]])
+    )
+
+# ── Session Mode ─-
 async def session_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -722,6 +775,53 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.upper()
     state = user_state.get(chat_id, {})
+    # Handle custom pair scan request
+    if state.get("awaiting_custom_pair"):
+        if "/" not in text:
+            await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
+            return
+        # Validate pair exists on BingX (or Binance fallback)
+        symbol = text.replace("/", "")
+        ticker_data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
+        # Fallback to Binance ticker
+        if not ticker_data or "data" not in ticker_data:
+            try:
+                r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=5)
+                if r.status_code != 200:
+                    await update.message.reply_text("❌ Pair not found on BingX/Binance.")
+                    return
+            except:
+                await update.message.reply_text("❌ Pair not found on BingX/Binance.")
+                return
+        # Run AI analysis
+        result = analyze_pair(text)
+        user_state[chat_id]["selected_pairs"] = [result]
+        state["awaiting_custom_pair"] = False
+        # Show detail view (similar to pair_detail_cb)
+        real, mock = get_balance()
+        bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
+        margin_val = (10000 if state.get("trade_mode", "MOCK") == "MOCK" else (real or 10000)) * (state.get("margin", 1) / 100)
+        conf = result["confidence"]
+        greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+        kb = [
+            [InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")],
+        ]
+        # Add SET ALERT button with current price
+        try:
+            cur_price, _ = get_binance_ticker(symbol)
+            if cur_price and cur_price > 0:
+                kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
+        except: pass
+        kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")])
+        text = (f"📊 {result['symbol']} {result['direction']} {state.get('trade_mode','MOCK')}\n\n"
+                f"Balance: {bal}\n"
+                f"Price: {result['change']:+.2f}%\n"
+                f"Reasons: {' | '.join(result['reasons'])}\n"
+                f"Leverage: {state.get('leverage',50)}x  |  Margin: {state.get('margin',1)}%  (${margin_val:,.0f})\n"
+                f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
+                f"Confidence: {conf}% {greens} 🦞")
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        return
     if state.get("awaiting_pair_input"):
         if "/" not in text:
             await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
@@ -981,6 +1081,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_stats_cb, pattern="^show_stats$"))
     app.add_handler(CallbackQueryHandler(show_gains_cb, pattern="^show_gains$"))
     app.add_handler(CallbackQueryHandler(trade_menu_cb, pattern="^trade_menu$"))
+    app.add_handler(CallbackQueryHandler(scan_pair_prompt_cb, pattern="^scan_pair_prompt$"))
     app.add_handler(CallbackQueryHandler(session_mode_cb, pattern="^session_mode$"))
     app.add_handler(CallbackQueryHandler(session_adjust_cb, pattern="^(lev|mar)_(up|down)$"))
     app.add_handler(CallbackQueryHandler(ai_scan_cb, pattern="^ai_scan$"))
