@@ -152,11 +152,16 @@ def analyze_pair(pair):
     klines_data = get_bingx_klines(symbol, interval="5m", limit=50)
     change = 0
     volume = 0
+    current_price = 0
     if klines_data and "data" in klines_data and len(klines_data["data"]) >= 2:
         closes = [float(k["close"]) for k in klines_data["data"][-10:]]
         if len(closes) >= 2:
             change = (closes[-1] - closes[-2]) / closes[-2] * 100
         volume = sum(float(k["volume"]) for k in klines_data["data"][-5:])
+        current_price = closes[-1] if closes else 0
+    # If we don't have price from klines, fetch from ticker
+    if current_price <= 0:
+        current_price, _ = get_binance_ticker(symbol)
     prompt = f"Scalp analysis for {pair} 5M: change {change:.2f}%, volume {volume:.0f}. Give: direction (LONG/SHORT), confidence 80-90%, RRR 1.5-3.0, 3 reasons."
     ai_text = call_stepfun_skill(prompt)
     direction = "LONG" if change >= 0 else "SHORT"
@@ -178,7 +183,8 @@ def analyze_pair(pair):
         "volume": volume,
         "confidence": confidence,
         "reasons": reasons,
-        "entry": 0, "sl": 0, "tp": 0, "rrr": 2.0
+        "entry": 0, "sl": 0, "tp": 0, "rrr": 2.0,
+        "current_price": current_price
     }
 
 # ── Multi-Exchange Ticker Fetchers ──
@@ -723,9 +729,16 @@ async def pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Confidence green squares
     conf = p["confidence"]
     greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+    # Get real-time price (from result or fresh ticker)
+    cur_price = p.get('current_price', 0)
+    if not cur_price:
+        try:
+            symbol_clean = p['symbol'].replace('/', '')
+            cur_price, _ = get_binance_ticker(symbol_clean)
+        except: pass
     text = (f"📊 {p['symbol']} {p['direction']} {state['trade_mode']}\n\n"
             f"Balance: {bal}\n"
-            f"Price: ${p['change']:+.2f}%\n"
+            f"Change: {p['change']:+.2f}%" + (f"  |  Current: ${cur_price:,.2f}" if cur_price else "") + "\n"
             f"Reasons: {' | '.join(p['reasons'])}\n"
             f"Leverage: {state['leverage']}x  |  Margin: {state['margin']}%  (${margin_val:,.0f})\n"
             f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {p.get('rrr', 2.0):.1f}\n"
@@ -1047,7 +1060,10 @@ async def send_scan_message(chat_id, setups, context):
     """Format and send scan results with a refresh button."""
     text = "✅ **Scan Complete — Top 4 Pairs:**\n\nSelect a pair to view details & execute:\n\n"
     for i, p in enumerate(setups, 1):
-        text += f"{i}. {p['symbol']} {p['direction']} — {p['change']:+.2f}% | Conf: {p['confidence']}%\n"
+        price_str = ""
+        if p.get('current_price'):
+            price_str = f" @ ${p['current_price']:,.2f}"
+        text += f"{i}. {p['symbol']} {p['direction']} — {p['change']:+.2f}%{price_str} | Conf: {p['confidence']}%\n"
     kb = grid_2x2(setups)
     kb.append([InlineKeyboardButton("🔄 Refresh Scan", callback_data="/scan")])
     kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="session_mode")])
@@ -1101,9 +1117,18 @@ async def custom_scan_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     margin_val = (10000 if state["trade_mode"] == "MOCK" else (real or 10000)) * (state["margin"] / 100)
     conf = result["confidence"]
     greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+    # Get real-time price for alert (prefer fresh ticker, fallback to kline price)
+    symbol_clean = result['symbol'].replace('/', '')
+    cur_price = result.get('current_price', 0)
+    try:
+        ticker_price, _ = get_binance_ticker(symbol_clean)
+        if ticker_price and ticker_price > 0:
+            cur_price = ticker_price
+    except Exception as e:
+        logger.debug(f"Ticker fetch failed: {e}")
     text = (f"📊 {result['symbol']} {result['direction']} {state['trade_mode']}\n\n"
             f"Balance: {bal}\n"
-            f"Price: {result['change']:+.2f}%\n"
+            f"Change: {result['change']:+.2f}%" + (f"  |  Current: ${cur_price:,.2f}" if cur_price else "") + "\n"
             f"Reasons: {' | '.join(result['reasons'])}\n"
             f"Leverage: {state['leverage']}x  |  Margin: {state['margin']}%  (${margin_val:,.0f})\n"
             f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
@@ -1112,12 +1137,8 @@ async def custom_scan_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")],
     ]
     # Add SET ALERT button with current price
-    symbol_clean = result['symbol'].replace('/', '')
-    try:
-        cur_price, _ = get_binance_ticker(symbol_clean)
-        if cur_price and cur_price > 0:
-            kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
-    except: pass
+    if cur_price and cur_price > 0:
+        kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
     kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")])
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
