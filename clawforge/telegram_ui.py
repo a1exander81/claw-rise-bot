@@ -399,24 +399,26 @@ def get_binance_ticker(symbol):
     return None, None
 
 def is_pair_valid_on_bingx(pair: str) -> bool:
-    """Check if pair exists on BingX by fetching its ticker (authenticated)."""
+    """Check if pair exists on BingX (our exchange) with Binance fallback for resilience."""
     try:
-        # Convert BTC/USDT -> BTC-USDT for BingX API
         symbol = pair.replace("/", "-").upper()
         ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
         if ticker and "data" in ticker:
             data = ticker["data"]
             price = float(data.get("lastPrice", 0))
-            return price > 0
+            if price > 0:
+                return True
     except Exception as e:
         logger.debug(f"BingX validation error for {pair}: {e}")
+    # Fallback: check Binance (most pairs cross-listed)
+    try:
+        symbol = pair.replace("/", "")
+        price, _ = get_binance_ticker(symbol)
+        return price is not None and price > 0
+    except Exception as e:
+        logger.debug(f"Binance fallback validation error for {pair}: {e}")
     return False
 
-def is_pair_valid_on_bingx(pair: str) -> bool:
-    """Check if pair exists on Binance by trying to fetch its ticker."""
-    symbol = pair.replace("/", "")
-    price, _ = get_binance_ticker(symbol)
-    return price is not None and price > 0
 
 def get_okx_ticker(symbol):
     """Fetch ticker from OKX public API (no auth). Symbol format: BTC-USDT."""
