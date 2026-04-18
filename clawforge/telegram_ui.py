@@ -1145,7 +1145,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Could not extract pair from URL.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
             return
-    
+
     # Binance futures URL handling
     if "binance.com" in text_lower and "/futures/" in text_lower:
         pair = extract_pair_from_binance_url(text)
@@ -1286,11 +1286,26 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not trades or not trades.get("trades"):
         await q.edit_message_text("📊 **No open positions**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
+    
+    # Build 2x3 grid for first 6 pairs
     buttons = []
-    for t in trades["trades"]:
-        profit = t.get("profit_pct", 0)
-        btn_text = f"📌 {t['pair']} - {profit:+.1f}%"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
+    trade_list = trades["trades"]
+    visible_trades = trade_list[:6]
+    extra_trades = trade_list[6:]
+    
+    # Create 2-column rows from visible trades
+    for i in range(0, len(visible_trades), 2):
+        row = []
+        for t in visible_trades[i:i+2]:
+            profit = t.get("profit_pct", 0)
+            btn_text = f"📌 {t['pair']} {profit:+.1f}%"
+            row.append(InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}"))
+        buttons.append(row)
+    
+    # Add OTHER TRADES button if there are more than 6
+    if extra_trades:
+        buttons.append([InlineKeyboardButton("📋 OTHER TRADES", callback_data="other_positions")])
+    
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
     await q.edit_message_text("📊 **Open Positions**\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -1313,6 +1328,30 @@ async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
     await q.edit_message_text("📊 **Open Positions**\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
+
+async def other_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show additional positions beyond the first 6 (overflow list)."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    trades = api_get("/api/v1/trades?status=open")
+    if not trades or not trades.get("trades"):
+        await q.edit_message_text("📊 **No open positions**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
+        return
+    
+    # Get trades from index 6 onward
+    extra_trades = trades["trades"][6:]
+    if not extra_trades:
+        await q.edit_message_text("📊 **No other positions**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
+        return
+    buttons = []
+    for t in extra_trades:
+        profit = t.get("profit_pct", 0)
+        btn_text = f"📌 {t['pair']} {profit:+.1f}%"
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
+    buttons.append([InlineKeyboardButton("⬅️ BACK TO LIST", callback_data="positions")])
+    await q.edit_message_text(f"📋 **Other Positions** ({len(extra_trades)} more)", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def pos_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -1691,6 +1730,7 @@ def main():
     app.add_handler(CallbackQueryHandler(positions_cb, pattern="^positions$"))
     app.add_handler(CallbackQueryHandler(pos_detail_cb, pattern="^pos_"))
     app.add_handler(CallbackQueryHandler(refresh_positions_cb, pattern="^refresh_positions$"))
+    app.add_handler(CallbackQueryHandler(other_positions_cb, pattern="^other_positions$"))
     app.add_handler(CallbackQueryHandler(close_position_cb, pattern="^close_"))
     app.add_handler(CallbackQueryHandler(share_pnl_cb, pattern="^share_"))
     app.add_handler(CallbackQueryHandler(execute_cb, pattern="^execute$"))
