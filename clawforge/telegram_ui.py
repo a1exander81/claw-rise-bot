@@ -785,6 +785,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.upper()
     state = user_state.get(chat_id, {})
+    logger.info(f"Text handler: chat={chat_id} text={text[:100]}")
     
     # Handle BingX URL paste (with or without http prefix)
     text_lower = text.lower()
