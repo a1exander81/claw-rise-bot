@@ -83,6 +83,24 @@ def bingx_signed_request(method, endpoint, params=None):
         logger.error(f"BingX API error: {e}")
         return None
 
+# ── BingX Hot Pairs Fetcher ──
+def get_bingx_hot_pairs(limit=5):
+    """Fetch top hot pairs from BingX ticker."""
+    try:
+        data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", timeout=5)
+        if data and "data" in data:
+            pairs = []
+            for item in data["data"][:limit]:
+                symbol = item.get("symbol", "").upper()
+                pairs.append(f"{symbol}/USDT")
+            logger.info(f"BingX hot pairs: {pairs}")
+            return pairs
+    except Exception as e:
+        logger.debug(f"BingX hot pairs error: {e}")
+    # Fallback
+    fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"][:limit]
+    logger.warning("BingX ticker failed, using fallback list")
+    return fallback
 
 # ── Multi-Exchange Ticker Fetchers ──
 def get_binance_ticker(symbol):
