@@ -783,16 +783,41 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.upper()
     state = user_state.get(chat_id, {})
-    if state.get("awaiting_pair_input"):
-        if "/" not in text:
-            await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
+    
+    # Handle BingX URL paste
+    if text.startswith("HTTP") and "BINGX.COM" in text:
+        pair = extract_pair_from_bingx_url(text)
+        if pair:
+            result = analyze_pair(pair)
+            user_state[chat_id]["selected_pairs"] = [result]
+            # Show detail view
+            real, mock = get_balance()
+            bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
+            margin_val = (10000 if state.get("trade_mode", "MOCK") == "MOCK" else (real or 10000)) * (state.get("margin", 1) / 100)
+            conf = result["confidence"]
+            greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+            kb = [[InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")]]
+            symbol_clean = result['symbol'].replace('/', '')
+            try:
+                cur_price, _ = get_binance_ticker(symbol_clean)
+                if cur_price and cur_price > 0:
+                    kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
+            except: pass
+            kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")])
+            text_msg = (f"📊 {result['symbol']} {result['direction']} {state.get('trade_mode','MOCK')}\n\n"
+                        f"Balance: {bal}\n"
+                        f"Price: {result['change']:+.2f}%\n"
+                        f"Reasons: {' | '.join(result['reasons'])}\n"
+                        f"Leverage: {state.get('leverage',50)}x  |  Margin: {state.get('margin',1)}%  (${margin_val:,.0f})\n"
+                        f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {result.get('rrr',2.0):.1f}\n"
+                        f"Confidence: {conf}% {greens} 🦞")
+            await update.message.reply_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
             return
-        if validate_pair_on_bingx(text):
-            user_state[chat_id]["selected_pair"] = {"symbol": text, "direction": "LONG"}
-            state["awaiting_pair_input"] = False
-            await update.message.reply_text(f"✅ Pair {text} added!\n\nUse /start to continue.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 MAIN", callback_data="main")]]))
         else:
-            await update.message.reply_text("❌ Pair not on BingX. Try again.")
+            await update.message.reply_text("❌ Could not extract pair from URL.")
+            return
+    
+    if state.get("awaiting_pair_input"):
         if "/" not in text:
             await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)")
             return
@@ -807,6 +832,32 @@ def validate_pair_on_bingx(pair):
     symbol = pair.replace("/", "").upper()
     data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
     return data is not None and "data" in data
+
+def extract_pair_from_bingx_url(url):
+    """Extract pair from BingX perpetual URL.
+    Example: https://bingx.com/en/perpetual/GENIUS-USDT -> GENIUS/USDT
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path_parts = parsed.path.strip('/').split('/')
+        # Look for 'perpetual' segment and take next
+        if 'perpetual' in path_parts:
+            idx = path_parts.index('perpetual')
+            if idx + 1 < len(path_parts):
+                pair_raw = path_parts[idx + 1]
+                # Convert GENIUS-USDT -> GENIUS/USDT
+                pair = pair_raw.replace('-', '/').upper()
+                return pair
+        # Fallback: last path segment
+        if path_parts:
+            pair_raw = path_parts[-1]
+            pair = pair_raw.replace('-', '/').upper()
+            if '/' in pair:
+                return pair
+    except Exception as e:
+        logger.debug(f"URL parse error: {e}")
+    return None
 
 # ── Positions ──
 async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
