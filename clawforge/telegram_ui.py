@@ -668,7 +668,7 @@ async def pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"Entry: market  |  SL: TBD  |  TP: TBD  |  RRR: {p.get('rrr', 2.0):.1f}\n"
             f"Confidence: {conf}% {greens} 🦞")
     kb = [
-        [InlineKeyboardButton("🚀 EXECUTE", callback_data=f"exec_{p['symbol']}")],
+        [InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")],
     ]
     # Add SET ALERT button with current price
     try:
@@ -833,7 +833,7 @@ async def execute_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    await q.answer("⏳ Executing...")
     chat_id = q.message.chat_id
     state = get_state(chat_id)
     pairs = user_state.get(chat_id, {}).get("selected_pairs", [])
@@ -848,8 +848,16 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "direction": p["direction"],
         "dry_run": state["trade_mode"] == "MOCK"
     }
+    logger.info(f"Executing trade: {payload}")
     result = api_post("/api/v1/forcebuy", payload)
-    msg = "✅ **Trade executed!**" if result else "❌ **Execution failed**"
+    if result:
+        msg = "✅ **Trade executed!**"
+        if state["trade_mode"] == "MOCK":
+            msg += "\n\n_MOCK mode — no real funds used_"
+        msg += "\n\nCheck POSITIONS for status."
+    else:
+        msg = "❌ **Execution failed**\n\nPossible reasons:\n• Freqtrade API error\n• Invalid pair/params\n• Exchange down"
+        logger.error(f"Trade execution failed for {p['symbol']}")
     await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
 
 # ── Scan Command ──
@@ -864,15 +872,21 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             setups = ai_scan_pairs()
             if not setups:
-                await status_msg.edit_text("❌ **Scan failed** — No pairs returned. Check API connectivity.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+                try:
+                    await status_msg.edit_text("❌ **Scan failed** — No pairs returned.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+                except: pass
                 return
             user_state[chat_id]["selected_pairs"] = setups
-            # Delete status and send results
-            await status_msg.delete()
+            # Delete status and send results (ignore if already deleted)
+            try:
+                await status_msg.delete()
+            except: pass
             await send_scan_message(chat_id, setups, context)
         except Exception as e:
             logger.error(f"Scan error: {e}", exc_info=True)
-            await status_msg.edit_text(f"❌ **Scan error**: {str(e)[:100]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+            try:
+                await status_msg.edit_text(f"❌ **Scan error**: {str(e)[:100]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+            except: pass
     
     # Schedule scan (allows immediate response to /scan)
     asyncio.create_task(do_scan())
@@ -887,17 +901,21 @@ async def refresh_scan_callback(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             setups = ai_scan_pairs()
             user_state[chat_id]["selected_pairs"] = setups
-            await query.message.delete()
+            try:
+                await query.message.delete()
+            except: pass
             await send_scan_message(chat_id, setups, context)
         except Exception as e:
             logger.error(f"Refresh scan error: {e}", exc_info=True)
-            await query.edit_message_text(
-                f"❌ **Scan failed**: {str(e)[:100]}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 RETRY", callback_data="/scan")],
-                    [InlineKeyboardButton("⬅️ BACK", callback_data="session_mode")]
-                ])
-            )
+            try:
+                await query.edit_message_text(
+                    f"❌ **Scan failed**: {str(e)[:100]}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 RETRY", callback_data="/scan")],
+                        [InlineKeyboardButton("⬅️ BACK", callback_data="session_mode")]
+                    ])
+                )
+            except: pass
     asyncio.create_task(do_refresh())
 
 async def send_scan_message(chat_id, setups, context):
