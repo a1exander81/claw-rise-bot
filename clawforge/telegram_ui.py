@@ -1694,11 +1694,19 @@ async def pos_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pnl_line += f" (${t['profit_abs']:,.2f})"
 
     status_btn = InlineKeyboardButton("🔴 CLOSE POSITION", callback_data=f"close_{trade_id}") if is_open else InlineKeyboardButton("✅ CLOSED", callback_data="dummy")
+    # Build TP/SL display
+    sl_pct = t.get('stop_loss_pct', 0)
+    tp_pct = t.get('take_profit_pct')
+    tp_display = f"{tp_pct:.1f}%" if tp_pct is not None else "N/A"
+    exit_reason = t.get('exit_reason', '')
+    exit_line = f"Exit: {exit_reason}" if not is_open and exit_reason else ""
     text = (f"📊 {t['pair']} {t.get('direction','LONG')} {'OPEN' if is_open else 'CLOSED'}\n\n"
             f"Balance: {bal}\n"
-            f"Time: {t.get('open_date','')}\n"
+            f"Time: {t.get('open_date','')}"
+            + (f" (closed: {t.get('close_date','')})" if not is_open else "") + "\n"
             f"Margin: ${t.get('stake_amount',0):,.2f}  |  {pnl_line}\n"
-            f"Entry: {t.get('open_rate',0):,.2f}  |  SL: {t.get('stop_loss_pct',0):.1f}%  |  TP: {t.get('take_profit',0):,.2f}\n")
+            f"Entry: {t.get('open_rate',0):,.2f}  |  SL: {sl_pct:.1f}%  |  TP: {tp_display}"
+            + (f"\n{exit_line}" if exit_line else "") + "\n")
     kb = [
         [status_btn],
         [InlineKeyboardButton("📤 Share PNL", callback_data=f"share_{trade_id}")],
