@@ -458,7 +458,13 @@ def get_binance_ticker(symbol):
     return None, None
 
 def is_pair_valid_on_bingx(pair: str) -> bool:
-    """Check if pair exists on BingX (our exchange) with Binance fallback for resilience."""
+    """Check if pair exists as a perpetual swap on BingX (USDT-margined only).
+    Binance fallback removed — it validates spot markets, not futures.
+    """
+    # Only USDT-margined futures are supported in this bot
+    if not pair.endswith("/USDT"):
+        logger.debug(f"Pair {pair} rejected: non-USDT quote (futures mode)")
+        return False
     try:
         symbol = pair.replace("/", "-").upper()
         ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
@@ -469,13 +475,6 @@ def is_pair_valid_on_bingx(pair: str) -> bool:
                 return True
     except Exception as e:
         logger.debug(f"BingX validation error for {pair}: {e}")
-    # Fallback: check Binance (most pairs cross-listed)
-    try:
-        symbol = pair.replace("/", "")
-        price, _ = get_binance_ticker(symbol)
-        return price is not None and price > 0
-    except Exception as e:
-        logger.debug(f"Binance fallback validation error for {pair}: {e}")
     return False
 
 def is_pair_valid_for_user(pair: str, user_id: int) -> bool:
