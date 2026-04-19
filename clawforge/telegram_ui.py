@@ -596,7 +596,7 @@ def call_stepfun_skill(prompt, retries=1):
     }
     for attempt in range(retries + 1):
         try:
-            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=10)
+            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=15)
             if r.status_code == 200:
                 return r.json()["choices"][0]["message"]["content"]
             logger.warning(f"StepFun HTTP {r.status_code}: {r.text[:100]}")
@@ -607,8 +607,10 @@ def call_stepfun_skill(prompt, retries=1):
     return None
 
 def ai_scan_pairs(custom_pairs=None, chat_id=None):
-    """Scan hot pairs or custom list, get klines (with fallback), call StepFun, return top 4."""
-    pairs_to_scan = custom_pairs if custom_pairs else get_bingx_hot_pairs(limit=6)
+    """Scan hot pairs or custom list, get klines (with fallback), call StepFun, return top 4.
+    Scans up to 4 pairs to keep response time reasonable.
+    """
+    pairs_to_scan = custom_pairs if custom_pairs else get_bingx_hot_pairs(limit=4)
     results = []
     for pair in pairs_to_scan:
         # Ensure format
