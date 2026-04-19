@@ -2184,10 +2184,24 @@ async def send_scan_message(chat_id, setups, context):
     """Format and send scan results with a refresh button."""
     text = "✅ **Scan Complete - Top 4 Pairs:**\n\nSelect a pair to view details & execute:\n\n"
     for i, p in enumerate(setups, 1):
-        price_str = ""
-        if p.get('current_price'):
-            price_str = f" @ ${p['current_price']:,.2f}"
-        text += f"{i}. {p['symbol']} {p['direction']} - {p['change']:+.2f}%{price_str} | Conf: {p['confidence']}%\n"
+        # Extract enriched params
+        entry = p.get('entry', p.get('current_price', 0))
+        sl = p.get('sl', 0)
+        tp = p.get('tp', 0)
+        rrr = p.get('rrr', 0)
+        qty = p.get('quantity', 0)
+        # Calculate percentages for display
+        if p.get('direction') == 'LONG':
+            sl_pct = ((sl - entry) / entry * 100) if entry else 0
+            tp_pct = ((tp - entry) / entry * 100) if entry else 0
+        else:
+            sl_pct = ((entry - sl) / sl * 100) if sl else 0
+            tp_pct = ((entry - tp) / tp * 100) if tp else 0
+        price_str = f" @ ${p['current_price']:,.2f}" if p.get('current_price') else ""
+        text += (
+            f"{i}. {p['symbol']} {p['direction']} - {p['change']:+.2f}%{price_str}\n"
+            f"   SL: {sl_pct:.1f}% | TP: {tp_pct:.1f}% | RRR: {rrr:.1f} | Qty: {qty:.6f}\n\n"
+        )
     kb = grid_2x2(setups)
     kb.append([InlineKeyboardButton("🔄 REFRESH", callback_data="refresh_scan")])
     kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="session_mode")])
