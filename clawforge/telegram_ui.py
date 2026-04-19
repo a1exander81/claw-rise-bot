@@ -1599,11 +1599,13 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
 
-    # Build 2x3 grid for first 6 pairs
+    # Build 2x3 grid for first 6 pairs (newest first)
     buttons = []
     trade_list = trades["trades"]
-    visible_trades = trade_list[:6]
-    extra_trades = trade_list[6:]
+    # Sort by open_timestamp descending (newest first)
+    trade_list_sorted = sorted(trade_list, key=lambda t: t.get("open_timestamp", 0), reverse=True)
+    visible_trades = trade_list_sorted[:6]
+    extra_trades = trade_list_sorted[6:]
 
     # Create 2-column rows from visible trades
     for i in range(0, len(visible_trades), 2):
@@ -1635,7 +1637,9 @@ async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
     buttons = []
-    for t in trades["trades"]:
+    # Sort by open_timestamp descending (newest first)
+    trade_list = sorted(trades["trades"], key=lambda t: t.get("open_timestamp", 0), reverse=True)
+    for t in trade_list:
         profit = t.get("profit_pct", 0)
         btn_text = f"📌 {t['pair']} - {profit:+.1f}%"
         buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
@@ -1655,8 +1659,10 @@ async def other_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("📊 **No open positions**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
         return
     
-    # Get trades from index 6 onward
-    extra_trades = trades["trades"][6:]
+    # Sort by open_timestamp descending (newest first)
+    trade_list = sorted(trades["trades"], key=lambda t: t.get("open_timestamp", 0), reverse=True)
+    # Get trades from index 6 onward (overflow)
+    extra_trades = trade_list[6:]
     bal = get_balance_display(chat_id)
     if not extra_trades:
         await q.edit_message_text(f"📊 **No other positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
