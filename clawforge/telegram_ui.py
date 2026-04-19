@@ -1693,6 +1693,74 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]])
     )
 
+# ── Profit Command ──
+async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /profit — Show P&L summary:
+    - Open positions (unrealized)
+    - Closed trades (realized)
+    - Today's P&L
+    - Win rate, avg win/loss
+    """
+    if not await enforce_access(update, context, allow_whitelisted=True, require_channel=True):
+        return
+    chat_id = update.effective_chat.id
+    lines = ["💰 **Profit Summary**" "\n"]
+
+    try:
+        # Open trades (unrealized)
+        r_open = requests.get('http://127.0.0.1:8080/api/v1/trades?status=open', timeout=5)
+        if r_open.status_code == 200:
+            data_open = r_open.json()
+            open_trades = data_open.get('trades', [])
+            total_unrealized = sum(t.get('profit_abs', 0) for t in open_trades)
+            lines.append(f"📈 **Open Positions** ({len(open_trades)}/3)")
+            for t in open_trades:
+                pnl = t.get('profit_abs', 0)
+                pct = t.get('profit_pct', 0)
+                lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
+            lines.append(f"Unrealized Total: ${total_unrealized:,.2f}")
+        else:
+            lines.append("❌ Cannot fetch open trades")
+
+        # Closed trades (realized) — last 20
+        r_closed = requests.get('http://127.0.0.1:8080/api/v1/trades?status=closed&limit=20', timeout=5)
+        if r_closed.status_code == 200:
+            data_closed = r_closed.json()
+            closed_trades = data_closed.get('trades', [])
+            if closed_trades:
+                total_realized = sum(t.get('profit_abs', 0) for t in closed_trades)
+                wins = [t for t in closed_trades if t.get('profit_abs', 0) > 0]
+                losses = [t for t in closed_trades if t.get('profit_abs', 0) < 0]
+                win_rate = len(wins) / len(closed_trades) * 100 if closed_trades else 0
+                avg_win = sum(t.get('profit_abs', 0) for t in wins) / len(wins) if wins else 0
+                avg_loss = sum(t.get('profit_abs', 0) for t in losses) / len(losses) if losses else 0
+                lines.append(f"\n📊 **Closed Trades** (last {len(closed_trades)})")
+                lines.append(f"Realized Total: ${total_realized:,.2f}")
+                lines.append(f"Win Rate: {win_rate:.0f}% ({len(wins)}W/{len(losses)}L)")
+                lines.append(f"Avg Win: ${avg_win:,.2f} | Avg Loss: ${avg_loss:,.2f}")
+            else:
+                lines.append("\n📊 No closed trades yet")
+        else:
+            lines.append("\n❌ Cannot fetch closed trades")
+
+        # Today's P&L (sum of closed trades opened today)
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        today_trades = [t for t in closed_trades if t.get('open_date', '').startswith(today)]
+        if today_trades:
+            today_pnl = sum(t.get('profit_abs', 0) for t in today_trades)
+            lines.append(f"\n📅 **Today's P&L**: ${today_pnl:,.2f}")
+
+    except Exception as e:
+        logger.error(f"Profit command error: {e}", exc_info=True)
+        lines.append(f"\n❌ Error: {str(e)[:100]}")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]])
+    )
+
 # ── Scan Command ──
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /scan command: run AI scan asynchronously and send results."""
@@ -1890,6 +1958,7 @@ async def set_commands(app: Application) -> None:
         BotCommand("cmd", "Show command center"),
         BotCommand("scan", "AI scan of hot pairs"),
         BotCommand("watch", "Check bot status"),
+        BotCommand("profit", "Show P&L summary"),
     ])
 
 # ── Build & Run ──
@@ -1904,6 +1973,7 @@ def main():
     logger.info("Connected to Freqtrade API")
     app = Application.builder().token(TOKEN).post_init(set_commands).build()
     app.add_handler(CommandHandler("watch", watch_command))
+    app.add_handler(CommandHandler("profit", profit_command))
     app.add_handler(CommandHandler(["start", "cmd"], start))
     app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input_handler))
