@@ -1761,6 +1761,85 @@ async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]])
     )
 
+# ── Daily Command ──
+async def daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /daily — Show today's trading summary:
+    - Trades opened/closed today
+    - Realized & unrealized P&L
+    - Win rate for today's closed trades
+    - Best/worst performing pairs
+    """
+    if not await enforce_access(update, context, allow_whitelisted=True, require_channel=True):
+        return
+    chat_id = update.effective_chat.id
+    lines = ["📅 **Daily Trading Summary**" "\n"]
+
+    try:
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+        # Open trades (unrealized) — filter those opened today
+        r_open = requests.get('http://127.0.0.1:8080/api/v1/trades?status=open', timeout=5)
+        open_today = []
+        if r_open.status_code == 200:
+            data_open = r_open.json()
+            open_trades = data_open.get('trades', [])
+            for t in open_trades:
+                open_date = t.get('open_date', '')
+                if open_date and open_date.startswith(today):
+                    open_today.append(t)
+            if open_today:
+                lines.append(f"📈 **Open Today** ({len(open_today)})")
+                for t in open_today:
+                    pnl = t.get('profit_abs', 0)
+                    pct = t.get('profit_pct', 0)
+                    lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
+            else:
+                lines.append("📈 No open trades from today yet")
+
+        # Closed trades (realized) — opened today
+        r_closed = requests.get('http://127.0.0.1:8080/api/v1/trades?status=closed&limit=50', timeout=5)
+        closed_today = []
+        if r_closed.status_code == 200:
+            data_closed = r_closed.json()
+            all_closed = data_closed.get('trades', [])
+            for t in all_closed:
+                open_date = t.get('open_date', '')
+                if open_date and open_date.startswith(today):
+                    closed_today.append(t)
+            if closed_today:
+                total_realized = sum(t.get('profit_abs', 0) for t in closed_today)
+                wins = [t for t in closed_today if t.get('profit_abs', 0) > 0]
+                losses = [t for t in closed_today if t.get('profit_abs', 0) < 0]
+                win_rate = len(wins) / len(closed_today) * 100 if closed_today else 0
+                lines.append(f"\n✅ **Closed Today** ({len(closed_today)})")
+                lines.append(f"Realized P&L: ${total_realized:,.2f}")
+                lines.append(f"Win Rate: {win_rate:.0f}% ({len(wins)}W/{len(losses)}L)")
+                # Best/worst
+                if closed_today:
+                    best = max(closed_today, key=lambda x: x.get('profit_abs', 0))
+                    worst = min(closed_today, key=lambda x: x.get('profit_abs', 0))
+                    lines.append(f"Best: {best['pair']} (${best['profit_abs']:,.2f})")
+                    lines.append(f"Worst: {worst['pair']} (${worst['profit_abs']:,.2f})")
+            else:
+                lines.append("\n✅ No closed trades from today yet")
+
+        # Combined today's P&L (realized + unrealized)
+        realized = sum(t.get('profit_abs', 0) for t in closed_today)
+        unrealized = sum(t.get('profit_abs', 0) for t in open_today)
+        total_today = realized + unrealized
+        lines.append(f"\n💹 **Today's Net P&L**: ${total_today:,.2f}")
+
+    except Exception as e:
+        logger.error(f"Daily command error: {e}", exc_info=True)
+        lines.append(f"\n❌ Error: {str(e)[:100]}")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]])
+    )
+
 # ── Scan Command ──
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /scan command: run AI scan asynchronously and send results."""
@@ -1959,6 +2038,7 @@ async def set_commands(app: Application) -> None:
         BotCommand("scan", "AI scan of hot pairs"),
         BotCommand("watch", "Check bot status"),
         BotCommand("profit", "Show P&L summary"),
+        BotCommand("daily", "Today's trading summary"),
     ])
 
 # ── Build & Run ──
@@ -1974,6 +2054,7 @@ def main():
     app = Application.builder().token(TOKEN).post_init(set_commands).build()
     app.add_handler(CommandHandler("watch", watch_command))
     app.add_handler(CommandHandler("profit", profit_command))
+    app.add_handler(CommandHandler("daily", daily_command))
     app.add_handler(CommandHandler(["start", "cmd"], start))
     app.add_handler(CommandHandler("scan", scan_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input_handler))
