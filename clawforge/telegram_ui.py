@@ -91,6 +91,10 @@ async def auto_refresh_position(chat_id: int, trade_id: str, context: ContextTyp
     try:
         while True:
             await asyncio.sleep(interval)
+            # Abort if this task is no longer the active one for the chat
+            if chat_id not in position_refresh_tasks or position_refresh_tasks[chat_id].get("trade_id") != trade_id:
+                logger.debug(f"Auto-refresh task obsolete for chat={chat_id}, trade_id={trade_id}. Exiting.")
+                break
             # Fetch fresh trade data
             t_data = api_get(f"/api/v1/trades?trade_id={trade_id}")
             if not t_data or not t_data.get("trades"):
