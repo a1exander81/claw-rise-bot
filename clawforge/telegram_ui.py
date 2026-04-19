@@ -1629,7 +1629,7 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Add OTHER TRADES button if there are more than 6
     if extra_trades:
         buttons.append([InlineKeyboardButton("📋 OTHER TRADES", callback_data="other_positions")])
-
+    buttons.append([InlineKeyboardButton("✅ CLOSED", callback_data="closed_positions")])
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
     await q.edit_message_text(f"📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -1654,6 +1654,7 @@ async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         btn_text = f"📌 {t['pair']} - {profit:+.1f}%"
         buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
+    buttons.append([InlineKeyboardButton("✅ CLOSED", callback_data="closed_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
     await q.edit_message_text(f"📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1683,7 +1684,54 @@ async def other_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         btn_text = f"📌 {t['pair']} {profit:+.1f}%"
         buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
     buttons.append([InlineKeyboardButton("⬅️ BACK TO LIST", callback_data="positions")])
+    # Also link to closed positions from overflow screen
+    buttons.append([InlineKeyboardButton("✅ CLOSED", callback_data="closed_positions")])
     await q.edit_message_text(f"📋 **Other Positions** ({len(extra_trades)} more)\n\n{bal}", reply_markup=InlineKeyboardMarkup(buttons))
+
+async def closed_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show closed positions (most recent first)."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    trades = api_get("/api/v1/trades?status=closed&limit=50")
+    bal = get_balance_display(chat_id)
+    if not trades or not trades.get("trades"):
+        await q.edit_message_text(f"📊 **No closed positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
+        return
+    # Sort by close_timestamp descending (newest closed first)
+    closed_list = sorted(trades["trades"], key=lambda t: t.get("close_timestamp", 0), reverse=True)
+    buttons = []
+    for t in closed_list:
+        profit = t.get("profit_pct", 0)
+        btn_text = f"✅ {t['pair']} {profit:+.1f}%"
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
+    buttons.append([InlineKeyboardButton("🔄 REFRESH", callback_data="refresh_closed")])
+    buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="positions")])
+    await q.edit_message_text(f"📊 **Closed Positions** (last {len(closed_list)})\n\n{bal}", reply_markup=InlineKeyboardMarkup(buttons))
+
+async def refresh_closed_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Refresh closed positions list."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer("🔄 Refreshing...")
+    chat_id = q.message.chat_id
+    trades = api_get("/api/v1/trades?status=closed&limit=50")
+    bal = get_balance_display(chat_id)
+    if not trades or not trades.get("trades"):
+        await q.edit_message_text(f"📊 **No closed positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
+        return
+    closed_list = sorted(trades["trades"], key=lambda t: t.get("close_timestamp", 0), reverse=True)
+    buttons = []
+    for t in closed_list:
+        profit = t.get("profit_pct", 0)
+        btn_text = f"✅ {t['pair']} {profit:+.1f}%"
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"pos_{t['trade_id']}")])
+    buttons.append([InlineKeyboardButton("🔄 REFRESH", callback_data="refresh_closed")])
+    buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="positions")])
+    await q.edit_message_text(f"📊 **Closed Positions** (last {len(closed_list)})\n\n{bal}", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def pos_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -2532,6 +2580,8 @@ def main():
     app.add_handler(CallbackQueryHandler(pos_detail_cb, pattern="^pos_"))
     app.add_handler(CallbackQueryHandler(refresh_positions_cb, pattern="^refresh_positions$"))
     app.add_handler(CallbackQueryHandler(other_positions_cb, pattern="^other_positions$"))
+    app.add_handler(CallbackQueryHandler(closed_positions_cb, pattern="^closed_positions$"))
+    app.add_handler(CallbackQueryHandler(refresh_closed_cb, pattern="^refresh_closed$"))
     app.add_handler(CallbackQueryHandler(close_position_cb, pattern="^close_"))
     app.add_handler(CallbackQueryHandler(share_pnl_cb, pattern="^share_"))
     app.add_handler(CallbackQueryHandler(execute_cb, pattern="^execute$"))
