@@ -2259,6 +2259,83 @@ async def set_commands(app: Application) -> None:
         logger.debug(f"Startup notification failed: {e}")
 
 # ── Build & Run ──
+# ── Refresh Pair Detail ──
+async def refresh_pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Refresh analysis for a pair from detail view."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer("🔄 Refreshing analysis...")
+    chat_id = q.message.chat_id
+    # Extract symbol from callback data: refresh_pair_BTC/USDT
+    symbol = q.data.split("_", 2)[2]
+    # Re-analyze
+    try:
+        result = analyze_pair(symbol)
+        result.setdefault('symbol', symbol)
+        result.setdefault('direction', 'LONG')
+        result.setdefault('change', 0.0)
+        result.setdefault('confidence', 85)
+        result.setdefault('reasons', ['Volume spike', 'Momentum'])
+        result.setdefault('current_price', 0)
+        result = enrich_trade_params(result, chat_id)
+        # Update selected_pairs
+        user_state.setdefault(chat_id, {"selected_pairs": []})
+        user_state[chat_id]['selected_pairs'] = [result]
+        # Render detail (same as select_pair_cb rendering)
+        state = get_state(chat_id)
+        real, mock = get_balance()
+        bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
+        conf = result['confidence']
+        greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
+        cur_price = result.get('current_price', 0)
+        if not cur_price:
+            try:
+                symbol_clean = result['symbol'].replace('/', '')
+                cur_price, _ = get_binance_ticker(symbol_clean)
+            except: pass
+        entry = result.get('entry', cur_price or 0)
+        sl = result.get('sl', 0)
+        tp = result.get('tp', 0)
+        rrr = result.get('rrr', 2.0)
+        stake = result.get('stake_amount', 0)
+        qty = result.get('quantity', 0)
+        lev = state['leverage']
+        if result['direction'] == 'LONG':
+            sl_pct = (sl/entry - 1)*100 if entry else 0
+            tp_pct = (tp/entry - 1)*100 if entry else 0
+        else:
+            sl_pct = (entry/sl - 1)*100 if sl else 0
+            tp_pct = (entry/tp - 1)*100 if tp else 0
+        proj_profit = stake * lev * abs(tp - entry) / entry if entry else 0
+        back_target = user_state[chat_id].get('pair_detail_back', 'manual_mode')
+        text = (f"📊 {result['symbol']} {result['direction']} {state['trade_mode']}\n\n"
+                f"Balance: {bal}\n"
+                f"Change: {result['change']:+.2f}%" + (f"  |  Current: ${cur_price:,.2f}" if cur_price else "") + "\n"
+                f"Reasons: {' | '.join(result['reasons'])}\n"
+                f"Leverage: {lev}x  |  Margin: {state['margin']}%  (${stake:,.0f})\n"
+                f"Entry: ${entry:,.4f}  |  SL: ${sl:,.4f} ({sl_pct:+.1f}%)  |  TP: ${tp:,.4f} ({tp_pct:+.1f}%)\n"
+                f"RRR: {rrr:.1f}  |  Qty: {qty:.6f}\n"
+                f"Projected TP P&L: ${proj_profit:,.2f} (+{tp_pct:.1f}%)\n"
+                f"Trailing: activates +50%, offset 2%\n"
+                f"Confidence: {conf}% {greens} 🦞")
+        kb = []
+        user_id = update.effective_user.id
+        if is_pair_valid_for_user(result['symbol'], user_id):
+            kb.append([InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")])
+        try:
+            symbol_clean = result['symbol'].replace('/', '')
+            cur_price, _ = get_binance_ticker(symbol_clean)
+            if cur_price and cur_price > 0:
+                kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
+        except Exception as e:
+            logger.debug(f"Alert price fetch failed: {e}")
+        kb.append([InlineKeyboardButton("🔄 REFRESH", callback_data=f"refresh_pair_{result['symbol']}")])
+        kb.append([InlineKeyboardButton("⬅️ BACK", callback_data=back_target)])
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.error(f"refresh_pair_detail error: {e}", exc_info=True)
+        await q.edit_message_text(f"❌ Refresh failed: {str(e)[:100]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
 def main():
     if not TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set")
@@ -2349,80 +2426,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-# ── Refresh Pair Detail ──
-async def refresh_pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Refresh analysis for a pair from detail view."""
-    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
-        return
-    q = update.callback_query
-    await q.answer("🔄 Refreshing analysis...")
-    chat_id = q.message.chat_id
-    # Extract symbol from callback data: refresh_pair_BTC/USDT
-    symbol = q.data.split("_", 2)[2]
-    # Re-analyze
-    try:
-        result = analyze_pair(symbol)
-        result.setdefault('symbol', symbol)
-        result.setdefault('direction', 'LONG')
-        result.setdefault('change', 0.0)
-        result.setdefault('confidence', 85)
-        result.setdefault('reasons', ['Volume spike', 'Momentum'])
-        result.setdefault('current_price', 0)
-        result = enrich_trade_params(result, chat_id)
-        # Update selected_pairs
-        user_state.setdefault(chat_id, {"selected_pairs": []})
-        user_state[chat_id]['selected_pairs'] = [result]
-        # Render detail (same as select_pair_cb rendering)
-        state = get_state(chat_id)
-        real, mock = get_balance()
-        bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
-        conf = result['confidence']
-        greens = "🟩" * ((conf - 80) // 10 + 1) if conf >= 80 else "🟨"
-        cur_price = result.get('current_price', 0)
-        if not cur_price:
-            try:
-                symbol_clean = result['symbol'].replace('/', '')
-                cur_price, _ = get_binance_ticker(symbol_clean)
-            except: pass
-        entry = result.get('entry', cur_price or 0)
-        sl = result.get('sl', 0)
-        tp = result.get('tp', 0)
-        rrr = result.get('rrr', 2.0)
-        stake = result.get('stake_amount', 0)
-        qty = result.get('quantity', 0)
-        lev = state['leverage']
-        if result['direction'] == 'LONG':
-            sl_pct = (sl/entry - 1)*100 if entry else 0
-            tp_pct = (tp/entry - 1)*100 if entry else 0
-        else:
-            sl_pct = (entry/sl - 1)*100 if sl else 0
-            tp_pct = (entry/tp - 1)*100 if tp else 0
-        proj_profit = stake * lev * abs(tp - entry) / entry if entry else 0
-        back_target = user_state[chat_id].get('pair_detail_back', 'manual_mode')
-        text = (f"📊 {result['symbol']} {result['direction']} {state['trade_mode']}\n\n"
-                f"Balance: {bal}\n"
-                f"Change: {result['change']:+.2f}%" + (f"  |  Current: ${cur_price:,.2f}" if cur_price else "") + "\n"
-                f"Reasons: {' | '.join(result['reasons'])}\n"
-                f"Leverage: {lev}x  |  Margin: {state['margin']}%  (${stake:,.0f})\n"
-                f"Entry: ${entry:,.4f}  |  SL: ${sl:,.4f} ({sl_pct:+.1f}%)  |  TP: ${tp:,.4f} ({tp_pct:+.1f}%)\n"
-                f"RRR: {rrr:.1f}  |  Qty: {qty:.6f}\n"
-                f"Projected TP P&L: ${proj_profit:,.2f} (+{tp_pct:.1f}%)\n"
-                f"Trailing: activates +50%, offset 2%\n"
-                f"Confidence: {conf}% {greens} 🦞")
-        kb = []
-        user_id = update.effective_user.id
-        if is_pair_valid_for_user(result['symbol'], user_id):
-            kb.append([InlineKeyboardButton("🚀 EXECUTE", callback_data="execute")])
-        try:
-            symbol_clean = result['symbol'].replace('/', '')
-            cur_price, _ = get_binance_ticker(symbol_clean)
-            if cur_price and cur_price > 0:
-                kb.append([InlineKeyboardButton("🔔 SET ALERT", callback_data=f"/alert {result['symbol']} {cur_price:.2f}")])
-        except Exception as e:
-            logger.debug(f"Alert price fetch failed: {e}")
-        kb.append([InlineKeyboardButton("🔄 REFRESH", callback_data=f"refresh_pair_{result['symbol']}")])
-        kb.append([InlineKeyboardButton("⬅️ BACK", callback_data=back_target)])
-        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as e:
-        logger.error(f"refresh_pair_detail error: {e}", exc_info=True)
-        await q.edit_message_text(f"❌ Refresh failed: {str(e)[:100]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
