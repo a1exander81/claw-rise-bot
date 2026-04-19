@@ -1827,6 +1827,24 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if state["trade_mode"] == "MOCK":
             msg += "\n\n_MOCK mode - no real funds used_"
         msg += "\n\nCheck POSITIONS for status."
+        # Try to fetch the newly opened trade ID to provide a direct VIEW POSITION button
+        try:
+            trades_data = api_get(f"/api/v1/trades?pair={p['symbol']}&status=open&limit=5")
+            if trades_data and trades_data.get("trades"):
+                # Find the most recent trade for this pair (by open_timestamp)
+                latest = max(trades_data["trades"], key=lambda t: t.get("open_timestamp", 0))
+                new_trade_id = latest.get("trade_id")
+                if new_trade_id is not None:
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📌 VIEW POSITION", callback_data=f"pos_{new_trade_id}")],
+                        [InlineKeyboardButton("⬅️ MAIN", callback_data="main")]
+                    ])
+                    await q.edit_message_text(msg, reply_markup=kb)
+                    return
+        except Exception as e:
+            logger.debug(f"Could not fetch new trade ID: {e}")
+        # Fallback: no direct position button
+        await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
     else:
         msg = "❌ **Execution failed**\n\n"
         if error_msg:
