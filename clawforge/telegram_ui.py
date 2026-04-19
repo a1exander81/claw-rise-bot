@@ -502,7 +502,7 @@ def get_okx_ticker(symbol):
 
 # ── Balance: BalRealMoc ──
 def get_balance():
-    """Return (real_balance, mock_balance)"""
+    """Return (real_balance, mock_balance) in USDT-equivalent."""
     # Real: from BingX
     real = None
     if BINGX_API_KEY and BINGX_API_SECRET:
@@ -511,9 +511,19 @@ def get_balance():
             for asset in data["data"]:
                 if asset.get("asset") == "USDT":
                     real = float(asset.get("available", 0))
-    # Mock: from Freqtrade
+    # Mock: from Freqtrade — sum all currency balances converted to USDT value
     mock_data = api_get("/api/v1/balance") or {}
-    mock = mock_data.get("currencies", [{}])[0].get("free", 10000)
+    mock = 0.0
+    currencies = mock_data.get("currencies", [])
+    for curr in currencies:
+        bal = float(curr.get("balance", 0) or 0)
+        # If the currency is USDT, add directly; others have 'est_stake' in USDT
+        if curr.get("currency") == "USDT":
+            mock += bal
+        else:
+            mock += float(curr.get("est_stake", 0) or 0)
+    if mock == 0.0:
+        mock = 10000.0
     return (real, mock)
 
 def format_balance(real, mock, mode):
