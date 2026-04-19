@@ -95,11 +95,11 @@ async def auto_refresh_position(chat_id: int, trade_id: str, context: ContextTyp
             if chat_id not in position_refresh_tasks or position_refresh_tasks[chat_id].get("trade_id") != trade_id:
                 logger.debug(f"Auto-refresh task obsolete for chat={chat_id}, trade_id={trade_id}. Exiting.")
                 break
-            # Fetch fresh trade data
-            t_data = api_get(f"/api/v1/trades?trade_id={trade_id}")
-            if not t_data or not t_data.get("trades"):
+            # Fetch fresh trade data from /api/v1/status
+            trades_list = api_get("/api/v1/status") or []
+            t = next((trade for trade in trades_list if str(trade.get('trade_id')) == trade_id), None)
+            if not t:
                 continue  # trade gone, will be cleaned up by cancel
-            t = t_data["trades"][0]
             # Rebuild the detail view text & buttons (similar to pos_detail_cb)
             state = get_state(chat_id)
             real, mock = get_balance()
@@ -1441,10 +1441,8 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Could not extract pair from URL.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
             return
 
-    # Binance futures URL handling
-
-    # Binance futures URL handling
-    if "binance.com" in text_lower and "/futures/" in text_lower:
+    # Binance futures OR spot URL handling
+    if "binance.com" in text_lower and ("/futures/" in text_lower or "/trade/" in text_lower):
         pair = extract_pair_from_binance_url(text)
         if pair:
             # Validate pair exists on BingX (admins bypass)
@@ -1564,25 +1562,31 @@ def extract_pair_from_bingx_url(url):
     return None
 
 def extract_pair_from_binance_url(url):
-    """Extract pair from Binance futures URL.
-    Example: https://www.binance.com/en/futures/GENIUSUSDT -> GENIUS/USDT
+    """Extract pair from Binance futures or spot URL.
+    Futures: https://www.binance.com/en/futures/BTCUSDT -> BTC/USDT
+    Spot:    https://www.binance.com/en/trade/GLMR_USDT?type=spot -> GLMR/USDT
     """
     try:
         from urllib.parse import urlparse
         parsed = urlparse(url)
-        # Check if it's a binance.com futures URL
         if 'binance.com' not in parsed.netloc.lower():
             return None
         path_parts = parsed.path.strip('/').split('/')
-        # Look for 'futures' segment and take next, or take last segment
+        # Futures: /futures/SYMBOL
         for i, part in enumerate(path_parts):
             if part.lower() == 'futures' and i + 1 < len(path_parts):
                 symbol = path_parts[i + 1].upper()
-                # Binance USDT-margined futures symbols end with USDT (e.g., BTCUSDT)
                 if symbol.endswith('USDT'):
                     base = symbol[:-4]
                     return f"{base}/USDT"
-        # Fallback: last path segment
+        # Spot: /trade/PAIR (e.g. GLMR_USDT)
+        for i, part in enumerate(path_parts):
+            if part.lower() == 'trade' and i + 1 < len(path_parts):
+                pair_raw = path_parts[i + 1].upper()
+                # Spot uses underscore: GLMR_USDT
+                if '_' in pair_raw and pair_raw.endswith('_USDT'):
+                    return pair_raw.replace('_', '/')
+        # Fallback: last segment (futures-style)
         if path_parts:
             symbol = path_parts[-1].upper()
             if symbol.endswith('USDT'):
@@ -1603,15 +1607,15 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         del position_refresh_tasks[chat_id]
     q = update.callback_query
     await q.answer()
-    trades = api_get("/api/v1/trades?status=open")
+    trades_list = api_get("/api/v1/status") or []
     bal = get_balance_display(chat_id)
-    if not trades or not trades.get("trades"):
+    if not trades_list:
         await q.edit_message_text(f"📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
 
     # Build 2x3 grid for first 6 pairs (newest first)
     buttons = []
-    trade_list = trades["trades"]
+    trade_list = trades_list
     # Sort by open_timestamp descending (newest first)
     trade_list_sorted = sorted(trade_list, key=lambda t: t.get("open_timestamp", 0), reverse=True)
     visible_trades = trade_list_sorted[:6]
@@ -1641,14 +1645,14 @@ async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer("🔄 Refreshing...")
     chat_id = q.message.chat_id
-    trades = api_get("/api/v1/trades?status=open")
+    trades_list = api_get("/api/v1/status") or []
     bal = get_balance_display(chat_id)
-    if not trades or not trades.get("trades"):
+    if not trades_list:
         await q.edit_message_text(f"📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
     buttons = []
     # Sort by open_timestamp descending (newest first)
-    trade_list = sorted(trades["trades"], key=lambda t: t.get("open_timestamp", 0), reverse=True)
+    trade_list = sorted(trades_list, key=lambda t: t.get("open_timestamp", 0), reverse=True)
     for t in trade_list:
         profit = t.get("profit_pct", 0)
         btn_text = f"📌 {t['pair']} - {profit:+.1f}%"
@@ -1664,14 +1668,14 @@ async def other_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = update.callback_query
     await q.answer()
-    trades = api_get("/api/v1/trades?status=open")
+    trades_list = api_get("/api/v1/status") or []
     chat_id = q.message.chat_id
-    if not trades or not trades.get("trades"):
+    if not trades_list:
         await q.edit_message_text("📊 **No open positions**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
         return
-    
+
     # Sort by open_timestamp descending (newest first)
-    trade_list = sorted(trades["trades"], key=lambda t: t.get("open_timestamp", 0), reverse=True)
+    trade_list = sorted(trades_list, key=lambda t: t.get("open_timestamp", 0), reverse=True)
     # Get trades from index 6 onward (overflow)
     extra_trades = trade_list[6:]
     bal = get_balance_display(chat_id)
@@ -1739,11 +1743,12 @@ async def pos_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     trade_id = q.data.split("_", 1)[1]
-    t = api_get(f"/api/v1/trades?trade_id={trade_id}")
-    if not t or not t.get("trades"):
+    # Fetch all open trades from /api/v1/status and find by trade_id
+    trades_list = api_get("/api/v1/status") or []
+    t = next((trade for trade in trades_list if str(trade.get('trade_id')) == trade_id), None)
+    if not t:
         await q.edit_message_text("❌ Trade not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
         return
-    t = t["trades"][0]
     # Use user's current trade mode for balance display
     chat_id = q.message.chat_id
     state = get_state(chat_id)
@@ -1809,11 +1814,12 @@ async def share_pnl_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     trade_id = q.data.split("_", 1)[1]
-    t = api_get(f"/api/v1/trades?trade_id={trade_id}")
-    if not t or not t.get("trades"):
+    # Fetch trade by ID from /api/v1/status (open) or closed trades endpoint
+    trades_list = api_get("/api/v1/status") or []
+    t = next((trade for trade in trades_list if str(trade.get('trade_id')) == trade_id), None)
+    if not t:
         await q.edit_message_text("❌ Trade not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="positions")]]))
         return
-    t = t["trades"][0]
     # Generate card (placeholder - use PnL card generator when ready)
     card_path = f"generated-cards/pnl_{trade_id}.png"
     # TODO: generate image with Pillow
@@ -1877,14 +1883,18 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
         )
         return
+    # Convert to exchange-specific symbol format (BingX futures: BTC/USDT -> BTC/USDT:USDT)
+    exchange_pair = p["symbol"]
+    if exchange_pair.endswith("/USDT"):
+        exchange_pair = exchange_pair + ":USDT"
     payload = {
-        "pair": p["symbol"],
+        "pair": exchange_pair,
         "leverage": state["leverage"],
         "margin": state["margin"],
         "direction": p["direction"],
         "dry_run": state["trade_mode"] == "MOCK"
     }
-    logger.info(f"Executing trade: {payload}")
+    logger.info(f"Executing trade: {payload} (leverage={state['leverage']})")
     success, error_msg = api_post("/api/v1/forcebuy", payload)
     if success:
         msg = "✅ **Trade executed!**"
@@ -1893,11 +1903,12 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         msg += "\n\nCheck POSITIONS for status."
         # Try to fetch the newly opened trade ID to provide a direct VIEW POSITION button
         try:
-            trades_data = api_get(f"/api/v1/trades?pair={p['symbol']}&status=open&limit=5")
-            if trades_data and trades_data.get("trades"):
-                # Find the most recent trade for this pair (by open_timestamp)
-                latest = max(trades_data["trades"], key=lambda t: t.get("open_timestamp", 0))
-                new_trade_id = latest.get("trade_id")
+            trades_list = api_get("/api/v1/status") or []
+            # Filter for matching pair and sort by timestamp
+            matching = [t for t in trades_list if t.get('pair') == exchange_pair]
+            if matching:
+                latest = max(matching, key=lambda t: t.get('open_timestamp', 0))
+                new_trade_id = latest.get('trade_id')
                 if new_trade_id is not None:
                     kb = InlineKeyboardMarkup([
                         [InlineKeyboardButton("📌 VIEW POSITION", callback_data=f"pos_{new_trade_id}")],
@@ -1975,11 +1986,11 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         # Get open trades count from API
         try:
-            r = requests.get('http://127.0.0.1:8080/api/v1/trades?status=open', timeout=3)
+            r = requests.get('http://127.0.0.1:8080/api/v1/status', timeout=3)
             if r.status_code == 200:
-                data = r.json()
-                trades = data.get('trades', [])
-                lines.append(f"Open trades: {len(trades)}/3")
+                trades_list = r.json()
+                if isinstance(trades_list, list):
+                    lines.append(f"Open trades: {len(trades_list)}/3")
         except Exception:
             pass
     else:
@@ -2087,18 +2098,18 @@ async def profit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["💰 **Profit Summary**" "\n"]
 
     try:
-        # Open trades (unrealized)
-        r_open = requests.get('http://127.0.0.1:8080/api/v1/trades?status=open', timeout=5)
+        # Open trades (unrealized) — use /api/v1/status which returns list of open trades
+        r_open = requests.get('http://127.0.0.1:8080/api/v1/status', timeout=5)
         if r_open.status_code == 200:
-            data_open = r_open.json()
-            open_trades = data_open.get('trades', [])
-            total_unrealized = sum(t.get('profit_abs', 0) for t in open_trades)
-            lines.append(f"📈 **Open Positions** ({len(open_trades)}/3)")
-            for t in open_trades:
-                pnl = t.get('profit_abs', 0)
-                pct = t.get('profit_pct', 0)
-                lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
-            lines.append(f"Unrealized Total: ${total_unrealized:,.2f}")
+            open_trades = r_open.json()
+            if isinstance(open_trades, list):
+                total_unrealized = sum(t.get('profit_abs', 0) for t in open_trades)
+                lines.append(f"📈 **Open Positions** ({len(open_trades)}/3)")
+                for t in open_trades:
+                    pnl = t.get('profit_abs', 0)
+                    pct = t.get('profit_pct', 0)
+                    lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
+                lines.append(f"Unrealized Total: ${total_unrealized:,.2f}")
         else:
             lines.append("❌ Cannot fetch open trades")
 
@@ -2158,23 +2169,23 @@ async def daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
         # Open trades (unrealized) — filter those opened today
-        r_open = requests.get('http://127.0.0.1:8080/api/v1/trades?status=open', timeout=5)
+        r_open = requests.get('http://127.0.0.1:8080/api/v1/status', timeout=5)
         open_today = []
         if r_open.status_code == 200:
-            data_open = r_open.json()
-            open_trades = data_open.get('trades', [])
-            for t in open_trades:
-                open_date = t.get('open_date', '')
-                if open_date and open_date.startswith(today):
-                    open_today.append(t)
-            if open_today:
-                lines.append(f"📈 **Open Today** ({len(open_today)})")
-                for t in open_today:
-                    pnl = t.get('profit_abs', 0)
-                    pct = t.get('profit_pct', 0)
-                    lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
-            else:
-                lines.append("📈 No open trades from today yet")
+            open_trades = r_open.json()
+            if isinstance(open_trades, list):
+                for t in open_trades:
+                    open_date = t.get('open_date', '')
+                    if open_date and open_date.startswith(today):
+                        open_today.append(t)
+                if open_today:
+                    lines.append(f"📈 **Open Today** ({len(open_today)})")
+                    for t in open_today:
+                        pnl = t.get('profit_abs', 0)
+                        pct = t.get('profit_pct', 0)
+                        lines.append(f"  {t['pair']}: {pct:+.1f}% (${pnl:,.2f})")
+                else:
+                    lines.append("📈 No open trades from today yet")
 
         # Closed trades (realized) — opened today
         r_closed = requests.get('http://127.0.0.1:8080/api/v1/trades?status=closed&limit=50', timeout=5)

@@ -35,6 +35,9 @@ class Claw5MSniper(IStrategy):
     trailing_only_offset_is_reached = True
     minimal_roi = {"0": 1.0}
 
+    # Use custom leverage() method
+    use_custom_leverage = True
+
     # ── MTF Filter Controls ──
     use_1h_filter = BooleanParameter(default=True, space="buy")
     use_4h_filter = BooleanParameter(default=True, space="buy")
@@ -162,7 +165,7 @@ class Claw5MSniper(IStrategy):
             return -1
         return 0
 
-    def populate_buy_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+    def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
         df["buy"] = 0
 
@@ -210,7 +213,7 @@ class Claw5MSniper(IStrategy):
 
         return df
 
-    def populate_sell_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+    def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
         df["sell"] = 0
         cond_rsi = self.rsi_enabled.value & (df["rsi"] > self.rsi_sell.value)
@@ -278,7 +281,7 @@ class Claw5MSniper(IStrategy):
 
     # ── Dynamic Leverage ──
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
-                 proposed_leverage: float, **kwargs) -> float:
+                 proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs) -> float:
         """
         Dynamic leverage based on 1H trend strength.
         Base: 50x (from user state)

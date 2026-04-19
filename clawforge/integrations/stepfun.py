@@ -1,44 +1,33 @@
 """StepFun API integration for market sentiment analysis."""
-
 import os
+import requests
 from typing import Optional
-from stepfun import StepFunClient
-from dotenv import load_dotenv
 
-load_dotenv()
+STEPFUN_API_KEY = os.getenv("STEPFUN_API_KEY", "")
+STEPFUN_URL = "https://api.stepfun.ai/v1/chat/completions"
 
-_client: Optional[StepFunClient] = None
-
-def get_client() -> StepFunClient:
-    global _client
-    if _client is None:
-        api_key = os.getenv("STEPFUN_API_KEY")
-        if not api_key:
-            raise ValueError("STEPFUN_API_KEY not set")
-        _client = StepFunClient(api_key=api_key)
-    return _client
-
-def get_sentiment_score(symbol: str, timeframe: str = "5m") -> float:
-    """
-    Query StepFun 3.5 Flash for market sentiment.
-    Returns: 0.0 (bearish) to 1.0 (bullish)
-    """
-    prompt = f"""
-    Analyze current market sentiment for {symbol} on {timeframe} timeframe.
-    Consider: recent price action, news flow, social buzz, on-chain flows.
-    Respond with JSON: {{"sentiment": float(0-1), "confidence": float(0-1), "reason": "brief"}}
-    """
+def get_sentiment_score(pair: str, context: str = "") -> float:
+    """Query StepFun for market sentiment. Returns score 0.0-1.0."""
+    if not STEPFUN_API_KEY:
+        return 0.5
     try:
-        client = get_client()
-        resp = client.chat.completions.create(
-            model="stepfun-3.5-flash",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
-        )
-        data = resp.choices[0].message.content
-        import json
-        parsed = json.loads(data)
-        return parsed.get("sentiment", 0.5)
+        headers = {
+            "Authorization": f"Bearer {STEPFUN_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "step-1-flash",
+            "messages": [
+                {"role": "system", "content": "You are a crypto market sentiment analyzer. Reply with only a number between 0.0 (very bearish) and 1.0 (very bullish)."},
+                {"role": "user", "content": f"Sentiment for {pair}? {context}"}
+            ],
+            "max_tokens": 10,
+            "temperature": 0.1
+        }
+        r = requests.post(STEPFUN_URL, json=payload, headers=headers, timeout=15)
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
+        return max(0.0, min(1.0, float(text)))
     except Exception as e:
         print(f"StepFun error: {e}")
-        return 0.5  # neutral on error
+        return 0.5

@@ -4,7 +4,6 @@ pandas>=2.0.0
 pandas-ta-classic==0.3.78
 ccxt>=4.0.0
 python-telegram-bot>=20.0
-stepfun>=1.0.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
 sqlalchemy>=2.0.0

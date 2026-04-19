@@ -12,10 +12,17 @@
     "name": "bingx",
     "key": "${BINGX_API_KEY}",
     "secret": "${BINGX_API_SECRET}",
-    "ccxt_config": {},
+    "ccxt_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
     "ccxt_async_config": {},
     "pair_whitelist": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
   },
+  "trading_mode": "futures",
+  "leverage": 50,
+  "margin_mode": "isolated",
   "pairlists": [
     {
       "method": "StaticPairList"
@@ -39,15 +46,17 @@
   },
   "api_server": {
     "enabled": true,
-    "listen_ip_address": "127.0.0.1",
+    "listen_ip_address": "0.0.0.0",
     "listen_port": 8080,
     "username": "admin",
     "password": "admin",
     "jwt_secret_key": "somethingRandomSomethingRandom123"
   },
+  "leverage_tier_loading": false,
   "logfile": "logs/clawforge.log",
   "user_data_dir": "user_data",
   "strategy": "Claw5MHybrid",
   "strategy_path": "strategies",
-  "initial_state": "running"
+  "initial_state": "running",
+  "force_entry_enable": true
 }

@@ -31,6 +31,9 @@ class Claw5MHybrid(IStrategy):
     trailing_only_offset_is_reached = True
     minimal_roi = {"0": 1.0}
 
+    # Use custom leverage() method
+    use_custom_leverage = True
+
     # ── MTF Filter Controls ──
     use_1h_filter = BooleanParameter(default=True, space="buy")
     use_4h_filter = BooleanParameter(default=True, space="buy")
@@ -152,7 +155,7 @@ class Claw5MHybrid(IStrategy):
             return -1
         return 0
 
-    def populate_buy_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+    def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
         df["buy"] = 0
 
@@ -249,15 +252,19 @@ class Claw5MHybrid(IStrategy):
         return min(base, 95)
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
-                 proposed_leverage: float, **kwargs) -> float:
+                 proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs) -> float:
+        logger = logging.getLogger(__name__)
         base = 50.0
         strength = getattr(self, 'latest_trend_strength', 0.5)
+        logger.info(f"[LEV] {pair} {current_time} strength={strength:.3f} side={side}")
         if strength >= 0.7:
-            return min(base * 1.5, 100)
+            lev = min(base * 1.5, 100)
         elif strength >= 0.4:
-            return base
+            lev = base
         else:
-            return max(base * 0.5, 20)
+            lev = max(base * 0.5, 20)
+        logger.info(f"[LEV] -> {lev}")
+        return lev
 
     @staticmethod
     def hyperopt_loss_function(results_df: pd.DataFrame, trade_count: int, min_date: datetime,
