@@ -22,13 +22,14 @@
   "trading_mode": "futures",
   "leverage": 50,
   "margin_mode": "isolated",
-  "pair_whitelist": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"],
   "pairlists": [
     {
       "method": "StaticPairList"
     }
   ],
-  "pair_blacklist": ["USDT/USDT"],
+  "pair_blacklist": [
+    "USDT/USDT"
+  ],
   "telegram": {
     "enabled": false,
     "token": "${TELEGRAM_BOT_TOKEN}",
@@ -58,5 +59,11 @@
   "strategy": "Claw5MHybrid",
   "strategy_path": "strategies",
   "initial_state": "running",
-  "force_entry_enable": true
+  "force_entry_enable": true,
+  "pair_whitelist": [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT",
+    "BNB/USDT:USDT"
+  ]
 }
