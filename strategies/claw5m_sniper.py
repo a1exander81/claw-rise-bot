@@ -70,6 +70,9 @@ class Claw5MSniper(IStrategy):
     use_sentiment = BooleanParameter(default=False, space="buy")
     sentiment_threshold = DecimalParameter(0.6, 0.9, default=0.75, space="buy")
 
+    # Per-pair dynamic confidence storage
+    custom_info: dict = {}
+
     def init(self, config):
         """Initialize strategy — called once at bot startup."""
         super().init(config)
@@ -215,7 +218,13 @@ class Claw5MSniper(IStrategy):
         # Store trend_strength for dynamic sizing/leverage
         self.latest_trend_strength = trend_strength
         self.latest_trend_bias = trend_bias
-
+        # Store confidence values at entry for leverage() and custom_stoploss()
+        pair_key = metadata.get('pair') if metadata else None
+        if pair_key:
+            if pair_key not in self.custom_info:
+                self.custom_info[pair_key] = {}
+            self.custom_info[pair_key]['trend_strength'] = trend_strength
+            self.custom_info[pair_key].setdefault('ai_confidence', 85)
         return df
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
