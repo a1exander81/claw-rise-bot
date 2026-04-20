@@ -24,10 +24,10 @@ class Claw5MHybrid(IStrategy):
 
     # ── Risk Management ──
     max_open_trades = 3
-    stoploss = -0.05
+    stoploss = -0.004
     trailing_stop = True
-    trailing_stop_positive = 0.02
-    trailing_stop_positive_offset = 0.10
+    trailing_stop_positive = 0.50
+    trailing_stop_positive_offset = 0.50
     trailing_only_offset_is_reached = True
     minimal_roi = {"0": 0.10}
 
@@ -66,6 +66,57 @@ class Claw5MHybrid(IStrategy):
     min_atr_pct = DecimalParameter(0.0005, 0.005, default=0.001, space="buy")
 
     use_custom_stoploss = True
+
+    # Per-pair dynamic confidence storage (set in init)
+    custom_info: dict = {}
+
+    def init(self, config):
+        """Initialize strategy — called once at bot startup."""
+        super().init(config)
+        self.custom_info = {}
+
+    def leverage(self, pair, current_time, current_rate,
+                 proposed_leverage, side, **kwargs):
+        """
+        Dynamic leverage based on dual confidence systems:
+        - AI confidence from StepFun (80-90%)
+        - Internal trend strength from MTF filter (0.0-1.0)
+        """
+        import os
+
+        # Retrieve stored confidence values
+        ai_confidence = self.custom_info.get(pair, {}).get('ai_confidence', 85)
+        trend_strength = self.custom_info.get(pair, {}).get('trend_strength', 0.6)
+
+        # AI confidence multiplier
+        if ai_confidence >= 90:
+            ai_mult = 1.0
+        elif ai_confidence >= 85:
+            ai_mult = 0.8
+        elif ai_confidence >= 80:
+            ai_mult = 0.6
+        else:
+            ai_mult = 0.4
+
+        # Trend strength multiplier
+        if trend_strength >= 0.8:
+            ts_mult = 1.0
+        elif trend_strength >= 0.6:
+            ts_mult = 0.7
+        elif trend_strength >= 0.4:
+            ts_mult = 0.5
+        else:
+            ts_mult = 0.3
+
+        # Base leverage from env
+        base_lev = int(os.getenv('DEFAULT_LEVERAGE', 50))
+        max_lev = int(os.getenv('MAX_LEVERAGE', 100))
+
+        # Calculate final leverage
+        calculated = round(base_lev * ai_mult * ts_mult)
+        final_leverage = max(5, min(max_lev, calculated))
+
+        return final_leverage
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
@@ -192,6 +243,14 @@ class Claw5MHybrid(IStrategy):
 
         self.latest_trend_strength = trend_strength
         self.latest_trend_bias = trend_bias
+        # Store confidence values at entry for leverage() and custom_stoploss()
+        pair_key = metadata.get('pair') if metadata else None
+        if pair_key:
+            if pair_key not in self.custom_info:
+                self.custom_info[pair_key] = {}
+            self.custom_info[pair_key]['trend_strength'] = trend_strength
+            # ai_confidence will be injected by UI via entry_tag or external; default 85
+            self.custom_info[pair_key].setdefault('ai_confidence', 85)
         return df
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -206,17 +265,59 @@ class Claw5MHybrid(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: 'Trade', current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
-        """Three-phase stoploss:
-        - <10% profit: fixed -5% SL
-        - 10%–20% profit: move to breakeven
-        - >=20% profit: let trailing take over (trail offset 1%, activation 20%)
         """
+        Dynamic SL based on:
+        1. Actual trade leverage (dynamic per trade)
+        2. Current profit state (profit protection)
+        3. Session (SGT timezone)
+        4. Combined AI + trend confidence at entry
+        """
+        # Get actual leverage used for this trade
+        leverage = getattr(trade, 'leverage', 50) or 50
+
+        # Get confidence values stored at entry
+        ai_confidence = self.custom_info.get(pair, {}).get('ai_confidence', 85)
+        trend_strength = self.custom_info.get(pair, {}).get('trend_strength', 0.6)
+
+        # Combined confidence score (0.0-1.0)
+        # AI normalized: (confidence - 80) / 10 → maps 80-90 to 0.0-1.0
+        ai_norm = max(0.0, min(1.0, (ai_confidence - 80) / 10))
+        combined_confidence = (ai_norm * 0.4) + (trend_strength * 0.6)
+
+        # ── PROFIT PROTECTION (highest priority) ──
+        if current_profit >= 1.00:
+            return -(0.10 / leverage)  # lock at 10% margin risk
+        if current_profit >= 0.50:
+            return -(0.15 / leverage)  # lock at 15% margin risk
         if current_profit >= 0.20:
-            return -0.25  # far away; trailing handles it
-        elif current_profit >= 0.10:
-            # Move SL to breakeven (entry price)
-            return (trade.open_rate - current_rate) / current_rate
-        return self.stoploss  # -0.05
+            return -(0.01 / leverage)  # near breakeven
+
+        # ── SESSION-BASED MARGIN SL ──
+        sgt_hour = (current_time.hour + 8) % 24
+
+        if 0 <= sgt_hour < 9:  # Tokyo — tight
+            base_margin_sl = 0.15
+        elif 16 <= sgt_hour < 20:  # London — medium
+            base_margin_sl = 0.20
+        elif 21 <= sgt_hour <= 23:  # NY — wide
+            base_margin_sl = 0.25
+        else:  # Off session — minimal
+            base_margin_sl = 0.10
+
+        # ── CONFIDENCE ADJUSTMENT ──
+        # High confidence → wider SL (let trade breathe)
+        # Low confidence → tighter SL (cut losses faster)
+        # Adjustment range: ±30% of base margin SL
+        confidence_adjustment = (combined_confidence - 0.5) * 0.3
+        adjusted_margin_sl = base_margin_sl * (1 + confidence_adjustment)
+
+        # Cap margin SL between 5% and 30%
+        adjusted_margin_sl = max(0.05, min(0.30, adjusted_margin_sl))
+
+        # Convert margin SL to price SL
+        price_sl = adjusted_margin_sl / leverage
+
+        return -price_sl
 
     def custom_exit(self, pair: str, trade: 'Trade', current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs) -> Optional[str]:

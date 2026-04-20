@@ -28,10 +28,10 @@ class Claw5MSniper(IStrategy):
 
     # ── Risk Management ──
     max_open_trades = 3
-    stoploss = -0.05
+    stoploss = -0.004
     trailing_stop = True
-    trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.10
+    trailing_stop_positive = 0.50
+    trailing_stop_positive_offset = 0.50
     trailing_only_offset_is_reached = True
     minimal_roi = {"0": 0.10}
 
@@ -69,6 +69,11 @@ class Claw5MSniper(IStrategy):
     # ── StepFun Sentiment ──
     use_sentiment = BooleanParameter(default=False, space="buy")
     sentiment_threshold = DecimalParameter(0.6, 0.9, default=0.75, space="buy")
+
+    def init(self, config):
+        """Initialize strategy — called once at bot startup."""
+        super().init(config)
+        self.custom_info = {}
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
