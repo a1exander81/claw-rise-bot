@@ -9,9 +9,9 @@
   "stake_currency": "USDT",
   "stake_amount": 100,
   "exchange": {
-    "name": "bingx",
-    "key": "${BINGX_API_KEY}",
-    "secret": "${BINGX_API_SECRET}",
+    "name": "bybit",
+    "key": "${BYBIT_API_KEY}",
+    "secret": "${BYBIT_API_SECRET}",
     "ccxt_config": {
       "options": {
         "defaultType": "swap"

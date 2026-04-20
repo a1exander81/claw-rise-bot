@@ -1900,10 +1900,9 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
         )
         return
-    # Convert to exchange-specific symbol format (BingX futures: BTC/USDT -> BTC/USDT:USDT)
+    # Convert to exchange-specific symbol format
+    # Bybit uses same format (BTC/USDT) — no conversion needed
     exchange_pair = p["symbol"]
-    if exchange_pair.endswith("/USDT"):
-        exchange_pair = exchange_pair + ":USDT"
     payload = {
         "pair": exchange_pair,
         "leverage": state["leverage"],
