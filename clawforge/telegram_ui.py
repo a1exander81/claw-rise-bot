@@ -2477,6 +2477,23 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     exchange_pair = p["symbol"]
     if exchange_pair.endswith("/USDT"):
         exchange_pair = exchange_pair + ":USDT"
+
+    # Block micro caps (price < $0.10)
+    price = float(p.get('current_price', 0))
+    if price < 0.10:
+        await q.answer("⛔ Blocked — micro cap (price < $0.10)")
+        return
+
+    # Block non-whitelisted pairs in session mode (manual mode allows any pair)
+    mode = state.get("mode", "manual")
+    if mode == "session":
+        whitelist = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+        if p["symbol"] not in whitelist:
+            await q.edit_message_text(
+                f"❌ **Pair not allowed in session mode**\n\n{p['symbol']} is not in the session whitelist.\n\nSwitch to MANUAL MODE to trade any pair.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]])
+            )
+            return
     # Dynamic leverage from AI confidence + trend strength
     confidence = p.get("confidence", 85)
     trend_strength = p.get("trend_strength", 0.5)
