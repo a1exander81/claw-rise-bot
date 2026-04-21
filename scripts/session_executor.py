@@ -22,6 +22,13 @@ AUTH_HEADER = {
     "Authorization": f"Basic {base64.b64encode(f'{FREQTRADE_API_USER}:{FREQTRADE_API_PASS}'.encode()).decode()}"
 }
 
+# ── Telegram config ──
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "CLAWMIMOTO_BOT_TOKEN",
+    os.getenv("TELEGRAM_BOT_TOKEN", "")
+)
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -79,10 +86,9 @@ def execute_trade(pair: str, direction: str, entry: float, sl: float, tp: float,
 
 
 def send_trade_to_channel(pair, direction, entry, sl, tp, margin_pct, trade_id):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    channel = os.getenv("RIGHTCLAW_CHANNEL", "@RightclawTrade")
-    if not token:
+    if not TELEGRAM_BOT_TOKEN:
         return
+    channel = os.getenv("RIGHTCLAW_CHANNEL", "@RightclawTrade")
     text = (
         f"🚨 **SESSION TRADE**\n\n"
         f"Pair: {pair} {direction}\n"
@@ -92,7 +98,7 @@ def send_trade_to_channel(pair, direction, entry, sl, tp, margin_pct, trade_id):
         f"Mode: SESSION-AUTO\n"
         f"Trade ID: {trade_id}"
     )
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": channel,
         "text": text,
@@ -106,12 +112,11 @@ def send_trade_to_channel(pair, direction, entry, sl, tp, margin_pct, trade_id):
 
 
 def send_approval_summary(chat_id: int, session_key: str, executed: list):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
+    if not TELEGRAM_BOT_TOKEN:
         return
     session_name = SESSIONS[session_key]["name"]
     text = f"✅ **{session_name} SESSION APPROVED**\n\nExecuted:\n" + "\n".join(f"• {e}" for e in executed)
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
@@ -120,12 +125,11 @@ def send_approval_summary(chat_id: int, session_key: str, executed: list):
 
 
 def send_skip_message(chat_id: int, session_key: str):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
+    if not TELEGRAM_BOT_TOKEN:
         return
     session_name = SESSIONS[session_key]["name"]
     text = f"⏭ **{session_name} SESSION SKIPPED**\nNo trades executed."
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
@@ -184,10 +188,9 @@ def run_autoskip() -> int:
         if age > EXPIRE_MINUTES:
             session_key = cache_file.stem.replace("_prescan", "")
             logger.warning(f"Auto-skipping {session_key} (age {age:.1f}min)")
-            chat_id = os.getenv("TELEGRAM_CHAT_ID")
-            if chat_id:
+            if TELEGRAM_CHAT_ID:
                 try:
-                    send_skip_message(int(chat_id), session_key)
+                    send_skip_message(int(TELEGRAM_CHAT_ID), session_key)
                 except Exception as e:
                     logger.error(f"Autoskip msg failed: {e}")
             try:
