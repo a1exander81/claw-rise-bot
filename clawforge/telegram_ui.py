@@ -285,6 +285,24 @@ def api_post(endpoint, payload=None):
         logger.error(f"API POST {endpoint} failed: {e}")
         return False, str(e)
 
+# ── Leverage Calculator ──
+def calculate_leverage(confidence: float, trend_strength: float) -> int:
+    """Dynamic leverage based on AI confidence and trend strength.
+    Base 50× modulated by multipliers. Clamped 5–100.
+    """
+    ai_mult = (
+        1.0 if confidence >= 90 else
+        0.8 if confidence >= 85 else
+        0.6 if confidence >= 80 else 0.4
+    )
+    trend_mult = (
+        1.0 if trend_strength >= 0.8 else
+        0.7 if trend_strength >= 0.6 else
+        0.5 if trend_strength >= 0.4 else 0.3
+    )
+    lev = 50 * ai_mult * trend_mult
+    return max(5, min(100, int(lev)))
+
 # ── Bybit API (v5) ──
 def bybit_signed_request(method: str, endpoint: str, params: dict = None, body: dict = None, **kwargs):
     if not BYBIT_API_KEY or not BYBIT_API_SECRET:
@@ -921,6 +939,8 @@ def ai_scan_pairs(custom_pairs=None, chat_id=None):
         direction = "LONG" if c["pct_4h"] >= 0 else "SHORT"
         confidence = max(80, min(89, int(85 + abs(c["pct_4h"])*0.5)))
         entry_strategy = "market"
+        # Trend strength: normalize 4H move magnitude (5% move = 1.0)
+        trend_strength = min(1.0, abs(c["pct_4h"]) / 5)
         reasons = ["Volume spike", "AI signal"]
         if ai_text:
             # Parse score — new multi-pattern for step-3.5-flash
@@ -978,6 +998,7 @@ def ai_scan_pairs(custom_pairs=None, chat_id=None):
             "atr_pct": c["atr_pct"],
             "support": c.get("support"),
             "resistance": c.get("resistance"),
+            "trend_strength": round(trend_strength, 2),
         }
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
@@ -999,6 +1020,7 @@ def ai_scan_pairs(custom_pairs=None, chat_id=None):
                     "reasons": ["Fallback"], "current_price": c["current_price"],
                     "ai_score": 5, "entry_strategy": "market", "atr_pct": c["atr_pct"],
                     "support": c.get("support"), "resistance": c.get("resistance"),
+                    "trend_strength": round(min(1.0, abs(c["pct_4h"]) / 5), 2),
                 }
                 if chat_id: fallback = enrich_trade_params(fallback, chat_id)
                 results.append(fallback)
@@ -2455,14 +2477,18 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     exchange_pair = p["symbol"]
     if exchange_pair.endswith("/USDT"):
         exchange_pair = exchange_pair + ":USDT"
+    # Dynamic leverage from AI confidence + trend strength
+    confidence = p.get("confidence", 85)
+    trend_strength = p.get("trend_strength", 0.5)
+    dynamic_leverage = calculate_leverage(confidence, trend_strength)
     payload = {
         "pair": exchange_pair,
-        "leverage": state["leverage"],
+        "leverage": dynamic_leverage,
         "margin": state["margin"],
         "direction": p["direction"],
         "dry_run": state["trade_mode"] == "MOCK"
     }
-    logger.info(f"Executing trade: {payload} (leverage={state['leverage']})")
+    logger.info(f"Executing trade: {payload} (leverage={dynamic_leverage}, conf={confidence}, trend={trend_strength:.2f})")
     success, error_msg = api_post("/api/v1/forcebuy", payload)
     if success:
         msg = "✅ **Trade executed!**"
