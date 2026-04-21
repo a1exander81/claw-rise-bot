@@ -9,19 +9,33 @@
   "stake_currency": "USDT",
   "stake_amount": 100,
   "exchange": {
-    "name": "bingx",
-    "key": "${BINGX_API_KEY}",
-    "secret": "${BINGX_API_SECRET}",
-    "ccxt_config": {},
+    "name": "bybit",
+    "key": "${BYBIT_API_KEY}",
+    "secret": "${BYBIT_API_SECRET}",
+    "ccxt_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
     "ccxt_async_config": {},
-    "pair_whitelist": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT",
+      "BNB/USDT:USDT"
+    ]
   },
+  "trading_mode": "futures",
+  "leverage": 50,
+  "margin_mode": "isolated",
   "pairlists": [
     {
       "method": "StaticPairList"
     }
   ],
-  "pair_blacklist": ["USDT/USDT"],
+  "pair_blacklist": [
+    "USDT/USDT"
+  ],
   "telegram": {
     "enabled": false,
     "token": "${TELEGRAM_BOT_TOKEN}",
@@ -29,23 +43,27 @@
   },
   "entry_pricing": {
     "use_order_book": false,
-    "price_last_balance": 0.0
+    "price_last_balance": 0.0,
+    "price_side": "other"
   },
   "exit_pricing": {
     "use_order_book": false,
-    "price_last_balance": 0.0
+    "price_last_balance": 0.0,
+    "price_side": "other"
   },
   "api_server": {
     "enabled": true,
-    "listen_ip_address": "127.0.0.1",
+    "listen_ip_address": "0.0.0.0",
     "listen_port": 8080,
     "username": "admin",
     "password": "admin",
     "jwt_secret_key": "somethingRandomSomethingRandom123"
   },
+  "leverage_tier_loading": false,
   "logfile": "logs/clawforge.log",
   "user_data_dir": "user_data",
-  "strategy": "Claw5MSniper",
+  "strategy": "Claw5MHybrid",
   "strategy_path": "strategies",
-  "initial_state": "running"
+  "initial_state": "running",
+  "force_entry_enable": true
 }

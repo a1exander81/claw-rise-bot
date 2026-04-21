@@ -1,25 +1,29 @@
 version: '3.8'
 
 services:
-  clawforge:
+  freqtrade:
     build: .
-    container_name: clawforge
+    container_name: clawforge-freqtrade
     restart: unless-stopped
     mem_limit: 1g
     cpus: '1.0'
+    ports:
+      - "127.0.0.1:8080:8080"
     networks:
       - claw-isolation
     volumes:
       - ./user_data:/app/user_data
-      - ./configs:/app/configs:ro
+      - ./configs:/app/configs
       - ./strategies:/app/strategies:ro
       - ./generated:/app/generated
+      - ./clawforge:/app/clawforge:ro
     environment:
-      - BINGX_API_KEY=${BINGX_API_KEY}
-      - BINGX_API_SECRET=${BINGX_API_SECRET}
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - STEPFUN_API_KEY=${STEPFUN_API_KEY}
+      - FREQTRADE_API_URL=http://127.0.0.1:8080
       - TZ=Asia/Singapore
     logging:
       driver: "json-file"
@@ -27,11 +31,42 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "python", "-c", "import freqtrade; print('OK')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/ping').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  telegram-ui:
+    build: .
+    container_name: clawforge-telegram
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: '0.5'
+    depends_on:
+      freqtrade:
+        condition: service_healthy
+    networks:
+      - claw-isolation
+    volumes:
+      - ./configs:/app/configs
+      - ./strategies:/app/strategies:ro
+      - ./clawforge:/app/clawforge:ro
+      - ./generated:/app/generated
+    environment:
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - STEPFUN_API_KEY=${STEPFUN_API_KEY}
+      - FREQTRADE_API_URL=http://freqtrade:8080
+      - TZ=Asia/Singapore
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: python -m clawforge.telegram_ui
 
 networks:
   claw-isolation:
