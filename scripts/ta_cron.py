@@ -296,7 +296,9 @@ def main():
             time_ago = format_time_ago(item["published"])
             url = item.get("url", "")
             if url:
-                lines.append(f"• [{item['title']}]({url}) — {item['source']} ({time_ago})")
+                # Title plain, source as clickable link on separate line
+                lines.append(f"• {item['title']}")
+                lines.append(f" 🔗 [{item['source']}]({url}) · {time_ago}")
             else:
                 lines.append(f"• {item['title']} — {item['source']} ({time_ago})")
     else:
@@ -324,6 +326,16 @@ def main():
     # Forward to channel
     channel_msg_id = send_telegram_message(TELEGRAM_BOT_TOKEN, RIGHTCLAW_CHANNEL, message, log_type="ta_update")
     logger.info(f"Channel message_id={channel_msg_id}")
+
+    # Send top headline as separate message for link preview card
+    if news_items:
+        top = news_items[0]
+        url = top.get("url", "")
+        if url:
+            headline_text = f"📰 {top['title']}\n🔗 [{top['source']}]({url})"
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, headline_text, log_type="headline_preview")
+            send_telegram_message(TELEGRAM_BOT_TOKEN, RIGHTCLAW_CHANNEL, headline_text, log_type="headline_preview")
+            logger.info(f"Sent headline preview for: {top['title'][:60]}...")
 
     return True
 
