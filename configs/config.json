@@ -17,7 +17,13 @@
         "defaultType": "swap"
       }
     },
-    "ccxt_async_config": {}
+    "ccxt_async_config": {},
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT",
+      "BNB/USDT:USDT"
+    ]
   },
   "trading_mode": "futures",
   "leverage": 50,
@@ -59,11 +65,5 @@
   "strategy": "Claw5MHybrid",
   "strategy_path": "strategies",
   "initial_state": "running",
-  "force_entry_enable": true,
-  "pair_whitelist": [
-    "BTC/USDT:USDT",
-    "ETH/USDT:USDT",
-    "SOL/USDT:USDT",
-    "BNB/USDT:USDT"
-  ]
+  "force_entry_enable": true
 }

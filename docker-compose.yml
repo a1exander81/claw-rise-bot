@@ -13,13 +13,13 @@ services:
       - claw-isolation
     volumes:
       - ./user_data:/app/user_data
-      - ./configs:/app/configs:ro
+      - ./configs:/app/configs
       - ./strategies:/app/strategies:ro
       - ./generated:/app/generated
       - ./clawforge:/app/clawforge:ro
     environment:
-      - BINGX_API_KEY=${BINGX_API_KEY}
-      - BINGX_API_SECRET=${BINGX_API_SECRET}
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - STEPFUN_API_KEY=${STEPFUN_API_KEY}
@@ -49,13 +49,13 @@ services:
     networks:
       - claw-isolation
     volumes:
-      - ./configs:/app/configs:ro
+      - ./configs:/app/configs
       - ./strategies:/app/strategies:ro
       - ./clawforge:/app/clawforge:ro
       - ./generated:/app/generated
     environment:
-      - BINGX_API_KEY=${BINGX_API_KEY}
-      - BINGX_API_SECRET=${BINGX_API_SECRET}
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - STEPFUN_API_KEY=${STEPFUN_API_KEY}

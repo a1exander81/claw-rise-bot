@@ -31,7 +31,6 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY clawforge/ ./clawforge/
-COPY configs/ ./configs/
 COPY strategies/ ./strategies/
 
 # Create directories for data
@@ -52,3 +51,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 # Default: run both services via supervisord-like script
 # But we'll use docker-compose to run them as separate services
+CMD ["freqtrade", "trade", "--config", "/app/configs/config.json", "--logfile", "/app/user_data/logs/clawforge.log"]

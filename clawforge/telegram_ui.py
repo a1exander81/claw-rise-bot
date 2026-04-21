@@ -15,6 +15,9 @@ import requests
 import asyncio
 import time
 import threading
+import json
+import re
+import concurrent.futures
 from datetime import datetime, timezone
 from pathlib import Path
 import feedparser
@@ -149,6 +152,10 @@ API_USER = os.getenv("FREQTRADE_API_USER", "admin")
 API_PASS = os.getenv("FREQTRADE_API_PASS", "admin")
 BINGX_API_KEY = os.getenv("BINGX_API_KEY")
 BINGX_API_SECRET = os.getenv("BINGX_API_SECRET")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 STEPFUN_API_KEY = os.getenv("STEPFUN_API_KEY")
 
 AUTH_HEADER = {"Authorization": f"Basic {base64.b64encode(f'{API_USER}:{API_PASS}'.encode()).decode()}"}
@@ -278,98 +285,82 @@ def api_post(endpoint, payload=None):
         logger.error(f"API POST {endpoint} failed: {e}")
         return False, str(e)
 
-# ── BingX API ──
-def bingx_signed_request(method, endpoint, params=None):
-    if not BINGX_API_KEY or not BINGX_API_SECRET:
+# ── Bybit API (v5) ──
+def bybit_signed_request(method: str, endpoint: str, params: dict = None, body: dict = None, **kwargs):
+    if not BYBIT_API_KEY or not BYBIT_API_SECRET:
         return None
-    base_url = "https://open-api.bingx.com"
+    import time
+    timestamp = str(int(time.time() * 1000))
+    recv_window = "5000"
+    base_url = "https://api.bybit.com"
     url = f"{base_url}{endpoint}"
     if params:
         sorted_params = sorted(params.items())
         query = '&'.join([f"{k}={v}" for k, v in sorted_params])
-        signature = hmac.new(BINGX_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-        url += f"?{query}&signature={signature}"
-    headers = {"X-BX-APIKEY": BINGX_API_KEY, "Content-Type": "application/json"}
+        url += f"?{query}"
+    body_str = ""
+    if body and method.upper() == "POST":
+        import json
+        body_str = json.dumps(body, separators=(',', ':'), sort_keys=True)
+    sign_str = f"{timestamp}{method.upper()}{recv_window}{body_str}"
+    signature = hmac.new(BYBIT_API_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    headers = {
+        "X-BAPI-API-KEY": BYBIT_API_KEY,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recv_window,
+        "Content-Type": "application/json"
+    }
     try:
-        r = requests.request(method, url, headers=headers, timeout=10)
+        r = requests.request(method, url, headers=headers, data=body_str if method.upper() == "POST" else None, **kwargs)
         return r.json() if r.status_code == 200 else None
     except Exception as e:
-        logger.error(f"BingX API error: {e}")
+        logger.error(f"Bybit API error: {e}")
         return None
 
-def get_bingx_hot_pairs(limit=5):
-    """Fetch top hot pairs from BingX ticker — USDT-margined only."""
+def get_bybit_hot_pairs(limit: int = 5) -> list:
+    """Fetch top volatile USDT perpetual pairs from Bybit ticker."""
     try:
-        data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", timeout=5)
-        if data and "data" in data:
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear"}, timeout=5)
+        if data and data.get("retCode") == 0:
+            items = data.get("result", {}).get("list", [])
             pairs = []
-            for item in data["data"]:
-                symbol = item.get("symbol", "").upper()
-                # BingX uses BTC-USDT format; convert to BTC/USDT
-                symbol = symbol.replace("-", "/")
-                # **USDT-margined perpetuals only**
-                if symbol.endswith("/USDT"):
-                    pairs.append(symbol)
-                if len(pairs) >= limit:
-                    break
-            logger.info(f"BingX USDT hot pairs: {pairs}")
-            if pairs:
-                return pairs
-    except Exception as e:
-        logger.debug(f"BingX hot pairs error: {e}")
-    # Fallback to Binance 24hr gainers (USDT pairs only)
-    try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            stable = ["USDT", "USDC", "BUSD", "DAI"]
-            # Only USDT pairs, exclude stablecoins
-            filtered = [d for d in data if d.get("symbol", "").endswith("USDT") and not any(s in d.get("symbol", "") for s in stable)]
-            filtered.sort(key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
-            pairs = []
-            for d in filtered:
-                sym = d['symbol']
-                if len(sym) >= 4 and sym.endswith("USDT"):
-                    base = sym[:-4]
+            for item in items:
+                symbol = item.get("symbol", "")
+                if symbol.endswith("USDT"):
+                    base = symbol[:-4]
                     pairs.append(f"{base}/USDT")
                 if len(pairs) >= limit:
                     break
-            logger.info(f"Binance fallback USDT pairs: {pairs}")
+            logger.info(f"Bybit hot USDT pairs: {pairs}")
             if pairs:
                 return pairs
     except Exception as e:
-        logger.debug(f"Binance fallback error: {e}")
-    # Ultimate fallback — USDT only
+        logger.debug(f"Bybit hot pairs error: {e}")
     fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"][:limit]
-    logger.warning("All hot pair sources failed, using USDT-only hardcoded list")
+    logger.warning("Bybit hot pairs fetch failed, using fallback USDT list")
     return fallback
 
-def get_bingx_klines(symbol, interval="5m", limit=50):
-    """Fetch klines from BingX with Binance fallback."""
-    # Try BingX first
+def get_bybit_klines(symbol: str, interval: str = "5", limit: int = 50):
+    """Fetch klines from Bybit. symbol format: BTC/USDT (converted to BTCUSDT)."""
     try:
-        data = bingx_signed_request("GET", "/openApi/swap/v2/quote/klines", {"symbol": symbol, "interval": interval, "limit": str(limit)}, timeout=5)
-        if data and "data" in data and len(data["data"]) >= limit:
-            logger.info(f"Data source: BingX klines for {symbol}")
-            return data
+        bybit_symbol = symbol.replace("/", "").upper()
+        data = bybit_signed_request(
+            "GET",
+            "/v5/market/kline",
+            params={"category": "linear", "symbol": bybit_symbol, "interval": interval, "limit": str(limit)},
+            timeout=5
+        )
+        if data and data.get("retCode") == 0:
+            klines = data.get("result", {}).get("list", [])
+            if klines:
+                logger.info(f"Bybit klines for {symbol}: {len(klines)} candles")
+                candles = []
+                for k in klines:
+                    candles.append({"open": k[1], "high": k[2], "low": k[3], "close": k[4], "volume": k[5]})
+                return {"data": candles}
     except Exception as e:
-        logger.debug(f"BingX klines error: {e}")
-    # Fallback to Binance
-    try:
-        binance_symbol = symbol.replace("/", "")
-        url = f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval={interval}&limit={limit}"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            raw = r.json()
-            candles = []
-            for c in raw:
-                candles.append({
-                    "open": c[1], "high": c[2], "low": c[3], "close": c[4], "volume": c[5]
-                })
-            logger.info(f"Binance klines fallback for {symbol} ({len(candles)} candles)")
-            return {"data": candles}
-    except Exception as e:
-        logger.debug(f"Binance klines fallback error: {e}")
+        logger.debug(f"Bybit klines error for {symbol}: {e}")
     return None
 
 # ── Single Pair Analyzer ──
@@ -377,7 +368,7 @@ def analyze_pair(pair):
     """Analyze a single pair (format 'BTC/USDT') and return result dict."""
     print(f"[DEBUG] analyze_pair called with: {pair}")
     symbol = pair.replace("/", "")
-    klines_data = get_bingx_klines(symbol, interval="5m", limit=50)
+    klines_data = get_bybit_klines(symbol, interval="5", limit=50)
     change = 0
     volume = 0
     current_price = 0
@@ -470,31 +461,31 @@ def get_binance_ticker(symbol):
         logger.debug(f"Binance ticker error for {symbol}: {e}")
     return None, None
 
-def is_pair_valid_on_bingx(pair: str) -> bool:
-    """Check if pair exists as a perpetual swap on BingX (USDT-margined only).
-    Binance fallback removed — it validates spot markets, not futures.
-    """
-    # Only USDT-margined futures are supported in this bot
+def is_pair_valid_on_bybit(pair: str) -> bool:
+    """Check if pair exists as a perpetual swap on Bybit (USDT-margined linear)."""
     if not pair.endswith("/USDT"):
         logger.debug(f"Pair {pair} rejected: non-USDT quote (futures mode)")
         return False
     try:
-        symbol = pair.replace("/", "-").upper()
-        ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
-        if ticker and "data" in ticker:
-            data = ticker["data"]
-            price = float(data.get("lastPrice", 0))
-            if price > 0:
-                return True
+        base = pair.split("/")[0]
+        bybit_symbol = f"{base}USDT"
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear", "symbol": bybit_symbol}, timeout=5)
+        if data and data.get("retCode") == 0:
+            result = data.get("result", {})
+            list_data = result.get("list", [])
+            if list_data and len(list_data) > 0:
+                price = float(list_data[0].get("lastPrice", 0))
+                if price > 0:
+                    return True
     except Exception as e:
-        logger.debug(f"BingX validation error for {pair}: {e}")
+        logger.debug(f"Bybit validation error for {pair}: {e}")
     return False
 
 def is_pair_valid_for_user(pair: str, user_id: int) -> bool:
     """Admin bypass: admins can use any pair without API validation."""
     if is_admin(user_id):
         return True
-    return is_pair_valid_on_bingx(pair)
+    return is_pair_valid_on_bybit(pair)
 
 def get_okx_ticker(symbol):
     """Fetch ticker from OKX public API (no auth). Symbol format: BTC-USDT."""
@@ -515,14 +506,14 @@ def get_okx_ticker(symbol):
 # ── Balance: BalRealMoc ──
 def get_balance():
     """Return (real_balance, mock_balance) in USDT-equivalent."""
-    # Real: from BingX
+    # Real: from Bybit
     real = None
-    if BINGX_API_KEY and BINGX_API_SECRET:
-        data = bingx_signed_request("GET", "/openApi/swap/v2/account/balance")
-        if data and "data" in data:
-            for asset in data["data"]:
-                if asset.get("asset") == "USDT":
-                    real = float(asset.get("available", 0))
+    if BYBIT_API_KEY and BYBIT_API_SECRET:
+        data = bybit_signed_request("GET", "/v5/account/wallet-balance", params={"accountType": "CONTRACT"})
+        if data and data.get("retCode") == 0:
+            for asset in data.get("result", {}).get("list", [{}])[0].get("coin", []):
+                if asset.get("coin") == "USDT":
+                    real = float(asset.get("availableToWithdraw", 0) or 0)
     # Mock: from Freqtrade — sum all currency balances converted to USDT value
     mock_data = api_get("/api/v1/balance") or {}
     mock = 0.0
@@ -639,82 +630,502 @@ def call_stepfun_skill(prompt, retries=2):
             time.sleep(2 ** attempt)  # exponential backoff: 1s, 2s
     return None
 
-def ai_scan_pairs(custom_pairs=None, chat_id=None):
-    """Scan hot pairs or custom list, get klines (with fallback), call StepFun, return top 4.
-    Scans up to 4 pairs to keep response time reasonable.
+def get_bybit_hot_pairs(limit: int = 5) -> list:
+    """Fetch top volatile USDT perpetual pairs from Bybit ticker."""
+    try:
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear"}, timeout=5)
+        if data and data.get("retCode") == 0:
+            items = data.get("result", {}).get("list", [])
+            pairs = []
+            for item in items:
+                symbol = item.get("symbol", "")
+                if symbol.endswith("USDT"):
+                    base = symbol[:-4]
+                    pairs.append(f"{base}/USDT")
+                if len(pairs) >= limit:
+                    break
+            logger.info(f"Bybit hot USDT pairs: {pairs}")
+            if pairs:
+                return pairs
+    except Exception as e:
+        logger.debug(f"Bybit hot pairs error: {e}")
+    fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"][:limit]
+    logger.warning("Bybit hot pairs fetch failed, using fallback USDT list")
+    return fallback
+
+def get_bybit_top_movers(limit: int = 20) -> list:
     """
-    pairs_to_scan = custom_pairs if custom_pairs else get_bingx_hot_pairs(limit=4)
-    logger.info(f"ai_scan_pairs: scanning {len(pairs_to_scan)} pairs: {pairs_to_scan}")
-    results = []
-    for pair in pairs_to_scan:
-        logger.info(f"Scanning pair: {pair}")
-        # Ensure format
+    Fetch top movers from Bybit with STRICT filters:
+    - Min USD turnover (price × volume) > $100M
+    - Max 4H move: ±15% (avoid already-moved pairs)
+    - Min price: $0.10
+    - Volume spike: > 2× 20-candle average
+    - Exclude stablecoins (USDC, BUSD, DAI, TUSD, FDUSD)
+    - Always include BTC, ETH, SOL, BNB as baseline
+    - Add top 3 additional movers only (no duplicates)
+    Returns list of symbols like "BTC/USDT".
+    """
+    try:
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear"}, timeout=5)
+        if not data or data.get("retCode") != 0:
+            raise ValueError("Bybit tickers API failed")
+        items = data.get("result", {}).get("list", [])
+        
+        baseline = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+        baseline_bases = {"BTC", "ETH", "SOL", "BNB"}
+        candidates = []
+        stable_bases = {"USDC", "BUSD", "DAI", "TUSD", "FDUSD"}  # exclude stablecoins
+        for item in items:
+            symbol = item.get("symbol", "")
+            if not symbol.endswith("USDT"):
+                continue
+            base = symbol[:-4]
+            if base in stable_bases:
+                continue
+            # Skip baseline pairs — they're already included
+            if base in baseline_bases:
+                continue
+            try:
+                vol_24h = float(item.get("volume24h", 0))
+                last_price = float(item.get("lastPrice", 0))
+            except (TypeError, ValueError):
+                continue
+            # Min price $0.10
+            if last_price <= 0.10:
+                continue
+            # Min USD turnover > $100M (liquidity filter)
+            if last_price * vol_24h < 100_000_000:
+                continue
+            # Fetch 4H candles
+            try:
+                klines_4h = bybit_signed_request(
+                    "GET", "/v5/market/kline",
+                    params={"category": "linear", "symbol": symbol, "interval": "240", "limit": 20},
+                    timeout=5
+                )
+                if klines_4h and klines_4h.get("retCode") == 0:
+                    k_list = klines_4h.get("result", {}).get("list", [])
+                    if len(k_list) >= 20:
+                        volumes = [float(k[5]) for k in k_list]
+                        avg_vol = sum(volumes) / len(volumes)
+                        # Volume spike: > 2x avg
+                        if vol_24h < avg_vol * 2.0:
+                            continue
+                        # 4H price change (close-to-close)
+                        open_4h = float(k_list[-1][4])   # oldest close
+                        close_4h = float(k_list[0][4])    # newest close
+                        if open_4h <= 0:
+                            continue
+                        pct_4h = (close_4h - open_4h) / open_4h * 100
+                        # Max move ±15%
+                        if abs(pct_4h) > 15.0:
+                            continue
+                        candidates.append({
+                            "symbol": f"{base}/USDT",
+                            "bybit_symbol": symbol,
+                            "price": last_price,
+                            "vol_24h": vol_24h,
+                            "avg_vol": avg_vol,
+                            "vol_ratio": vol_24h / avg_vol if avg_vol > 0 else 0,
+                            "pct_4h": pct_4h,
+                        })
+            except Exception as e:
+                logger.debug(f"Kline fetch failed for {symbol}: {e}")
+                continue
+        # Sort by volume ratio desc, then 4H move magnitude
+        candidates.sort(key=lambda x: (x["vol_ratio"], abs(x["pct_4h"])), reverse=True)
+        top_extra = [c["symbol"] for c in candidates[:3]]  # only top 3 movers
+        final_list = baseline + top_extra
+        logger.info(f"Bybit top movers: baseline={baseline}, extra={top_extra}")
+        return final_list
+    except Exception as e:
+        logger.error(f"get_bybit_top_movers failed: {e}")
+        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+
+def calculate_indicators(symbol: str) -> dict:
+    """
+    Fetch 1H and 4H klines from Bybit and compute:
+    - trend: EMA8 vs EMA20 crossover (1H)
+    - volume_ratio: current 5-period volume vs 20-period average (1H)
+    - atr_pct: ATR(14) / price (4H)
+    - support: lowest low of last 10 candles (4H)
+    - resistance: highest high of last 10 candles (4H)
+    Returns dict with metrics.
+    """
+    try:
+        bybit_symbol = symbol.replace("/", "").upper()
+        # Fetch 1H klines (50 candles)
+        klines_1h = bybit_signed_request(
+            "GET", "/v5/market/kline",
+            params={"category": "linear", "symbol": bybit_symbol, "interval": "60", "limit": 50},
+            timeout=5
+        )
+        # Fetch 4H klines (50 candles)
+        klines_4h = bybit_signed_request(
+            "GET", "/v5/market/kline",
+            params={"category": "linear", "symbol": bybit_symbol, "interval": "240", "limit": 50},
+            timeout=5
+        )
+        if not klines_1h or not klines_4h:
+            return {}
+        k1 = klines_1h.get("result", {}).get("list", [])
+        k4 = klines_4h.get("result", {}).get("list", [])
+        if len(k1) < 20 or len(k4) < 20:
+            return {}
+        # Extract closes, highs, lows, volumes (Bybit returns: [timestamp, open, high, low, close, volume, turnover])
+        closes_1h = [float(c[4]) for c in k1]
+        highs_1h = [float(c[2]) for c in k1]
+        lows_1h = [float(c[3]) for c in k1]
+        volumes_1h = [float(c[5]) for c in k1]
+        closes_4h = [float(c[4]) for c in k4]
+        highs_4h = [float(c[2]) for c in k4]
+        lows_4h = [float(c[3]) for c in k4]
+        # EMA8 vs EMA20 (1H) — simple
+        def ema(data, period):
+            alpha = 2 / (period + 1)
+            ema_val = data[-period]
+            for price in data[-period+1:]:
+                ema_val = alpha * price + (1 - alpha) * ema_val
+            return ema_val
+        ema8 = ema(closes_1h, 8)
+        ema20 = ema(closes_1h, 20)
+        trend = "BULLISH" if ema8 > ema20 else "BEARISH"
+        # Volume ratio (1H): avg of last 5 vs last 20
+        vol_recent = sum(volumes_1h[-5:]) / 5
+        vol_avg = sum(volumes_1h[-20:]) / 20
+        vol_ratio = vol_recent / vol_avg if vol_avg > 0 else 0
+        # ATR % (4H, period 14)
+        atr_sum = 0
+        for i in range(-14, 0):
+            high = highs_4h[i]
+            low = lows_4h[i]
+            close_prev = closes_4h[i-1]
+            tr = max(high - low, abs(high - close_prev), abs(low - close_prev))
+            atr_sum += tr
+        atr = atr_sum / 14
+        current_price = closes_4h[-1]
+        atr_pct = (atr / current_price * 100) if current_price > 0 else 0
+        # Support/Resistance (4H last 10 candles)
+        support = min(lows_4h[-10:])
+        resistance = max(highs_4h[-10:])
+        return {
+            "trend": trend,
+            "volume_ratio": round(vol_ratio, 2),
+            "atr_pct": round(atr_pct, 2),
+            "support": round(support, 4),
+            "resistance": round(resistance, 4),
+            "current_price": round(current_price, 4),
+        }
+    except Exception as e:
+        logger.debug(f"Indicator calc failed for {symbol}: {e}")
+        return {}
+
+
+def call_stepfun_skill(prompt: str, retries: int = 2) -> str | None:
+    """Call StepFun API with timeout/retry. Returns text or None."""
+    if not STEPFUN_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {STEPFUN_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "step-3.5-flash",
+        "messages": [
+            {"role": "system", "content": "You are an expert crypto scalping analyst. Provide concise TA with confidence %% (80-90) and RRR."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
+    }
+    for attempt in range(retries + 1):
+        try:
+            logger.debug(f"StepFun call attempt {attempt+1}/{retries+1} for: {prompt[:60]}...")
+            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"]
+            logger.warning(f"StepFun HTTP {r.status_code}: {r.text[:100]}")
+        except Exception as e:
+            logger.error(f"StepFun error: {e}")
+    return None
+
+
+def ai_scan_pairs(custom_pairs=None, chat_id=None):
+    """
+    Enhanced Scan Logic:
+    1. Get top movers from Bybit (baseline: BTC ETH SOL BNB + top 3 extras)
+       Filters: turnover >$100M, price >$0.10, 4H move ±15%, volume spike >2× avg
+    2. For each, compute 1H/4H indicators (trend, volume ratio, ATR%, S/R)
+    3. Parallel StepFun scoring (top 8 candidates, 10s timeout, 1 retry)
+    4. Sort by AI score, take top 4
+    5. Enrich trade params (entry/SL/TP/sizing)
+    6. Return list of results
+    """
+    # STEP 1 — Get top movers
+    pairs_to_scan = custom_pairs if custom_pairs else get_bybit_top_movers(limit=20)
+    logger.info(f"ai_scan_pairs: scanning {len(pairs_to_scan)} top movers")
+    # Phase 1: Fetch indicators for all pairs (fast)
+    candidates = []
+    for pair in pairs_to_scan[:20]:
         if "/" not in pair:
             pair = f"{pair}/USDT"
-        symbol = pair.replace("/", "")
-        klines_data = get_bingx_klines(symbol, interval="5m", limit=50)
-        change = 0
-        volume = 0
-        current_price = 0
-        if klines_data and "data" in klines_data and len(klines_data["data"]) >= 2:
-            closes = [float(k["close"]) for k in klines_data["data"][-10:]]
-            if len(closes) >= 2:
-                change = (closes[-1] - closes[-2]) / closes[-2] * 100
-            volume = sum(float(k["volume"]) for k in klines_data["data"][-5:])
-            current_price = closes[-1] if closes else 0
-        if current_price <= 0:
-            current_price, _ = get_binance_ticker(symbol)
-        logger.info(f"Pair {pair}: change={change:.2f}%, price={current_price}")
-        # AI reasoning
-        prompt = f"Scalp analysis for {pair} 5M: change {change:.2f}%, volume {volume:.0f}. Give: direction (LONG/SHORT), confidence 80-90%, RRR 1.5-3.0, 3 reasons."
-        ai_text = call_stepfun_skill(prompt)
-        logger.info(f"StepFun response for {pair}: {ai_text[:80] if ai_text else 'None'}")
-        direction = "LONG" if change >= 0 else "SHORT"
-        confidence = 85 if change >= 0 else 75
-        reasons = ["High volume", "Momentum", "AI signal"]
-        if ai_text:
-            ai_lower = ai_text.lower()
-            if "short" in ai_lower:
-                direction = "SHORT"
-            if "confidence" in ai_lower:
-                try:
-                    confidence = int(''.join(filter(str.isdigit, ai_text.split("confidence")[1].split("%")[0])))
-                except: pass
-            reasons = [line.strip("- * ") for line in ai_text.split('\n') if line.strip()][:3] or reasons
-        result = {
+        ind = calculate_indicators(pair)
+        if not ind or ind.get("current_price", 0) <= 0:
+            logger.debug(f"Skipping {pair}: no indicator data")
+            continue
+        # Compute 4H change directly
+        pct_4h = ind.get("pct_4h", 0)
+        try:
+            bybit_sym = pair.replace("/", "").upper()
+            k4 = bybit_signed_request(
+                "GET", "/v5/market/kline",
+                params={"category": "linear", "symbol": bybit_sym, "interval": "240", "limit": 2},
+                timeout=5
+            )
+            if k4 and k4.get("retCode") == 0:
+                klist = k4.get("result", {}).get("list", [])
+                if len(klist) >= 2:
+                    open_4h = float(klist[-1][4])   # oldest close
+                    close_4h = float(klist[0][4])    # newest close
+                    pct_4h = (close_4h - open_4h) / open_4h * 100 if open_4h else 0
+        except Exception:
+            pass
+        candidates.append({
             "symbol": pair,
+            "pct_4h": pct_4h,
+            "vol_ratio": ind.get("volume_ratio", 1),
+            "trend": ind.get("trend", "UNKNOWN"),
+            "atr_pct": ind.get("atr_pct", 0),
+            "current_price": ind.get("current_price", 0),
+            "support": ind.get("support"),
+            "resistance": ind.get("resistance"),
+        })
+    if not candidates:
+        logger.warning("No valid candidates after indicator fetch")
+        return []
+    # Phase 2: Pre-filter to top 8 by heuristic (abs(pct_4h) * vol_ratio)
+    for c in candidates:
+        c["heuristic"] = abs(c["pct_4h"]) * c["vol_ratio"]
+    candidates.sort(key=lambda x: x["heuristic"], reverse=True)
+    top_candidates = candidates[:8]
+    logger.info(f"Selected {len(top_candidates)} candidates for StepFun ranking")
+    # Phase 3: Parallel StepFun scoring
+    def score_candidate(c):
+        prompt = (
+            f"Scalp analysis for {c['symbol']}:"
+            f" 4H move: {c['pct_4h']:.1f}%, Volume ratio: {c['vol_ratio']:.1f}x,"
+            f" Trend: {c['trend']}, ATR: {c['atr_pct']:.1f}%."
+            f" Rate 1-10 for scalping opportunity."
+            f" Give: score, direction (LONG/SHORT), confidence % (80-90), entry strategy (market/limit), key support/resistance levels."
+        )
+        ai_text = call_stepfun_skill(prompt, retries=1)
+        logger.info(f"StepFun raw response: {ai_text[:200] if ai_text else 'None'}")
+        score = 5
+        direction = "LONG" if c["pct_4h"] >= 0 else "SHORT"
+        confidence = max(80, min(89, int(85 + abs(c["pct_4h"])*0.5)))
+        entry_strategy = "market"
+        reasons = ["Volume spike", "AI signal"]
+        if ai_text:
+            # Parse score — try multiple patterns for step-3.5-flash format
+            score_patterns = [
+                r'score[\s:]+(\d{1,2})/10',   # "score: 8/10"
+                r'score[\s:]+(\d{1,2})',      # "score: 8" or "score 8"
+                r'(\d{1,2})/10',              # "8/10"
+                r'\b([1-9]|10)\b',           # standalone number
+            ]
+            for pat in score_patterns:
+                m = re.search(pat, ai_text, re.IGNORECASE)
+                if m:
+                    try:
+                        s = int(m.group(1))
+                        if 1 <= s <= 10:
+                            score = s
+                            break
+                    except: pass
+            # Parse direction
+            if 'short' in ai_text.lower(): direction = 'SHORT'
+            elif 'long' in ai_text.lower(): direction = 'LONG'
+            # Parse confidence
+            conf_patterns = [
+                r'confidence[\s:]+(\d{2,3})%?',
+                r'conf[\s:]+(\d{2,3})',
+                r'\b(\d{2,3})%\b',
+            ]
+            for pat in conf_patterns:
+                m = re.search(pat, ai_text, re.IGNORECASE)
+                if m:
+                    try:
+                        c_val = int(m.group(1))
+                        if 50 <= c_val <= 99:
+                            confidence = c_val
+                            break
+                    except: pass
+            # Parse entry strategy
+            if 'limit' in ai_text.lower(): entry_strategy = 'limit'
+            # Extract reasons (skip markdown headers, pick first 3 meaningful lines)
+            reasons = []
+            for line in ai_text.split('\n'):
+                line = line.strip('- *•').strip()
+                if line and len(line) > 5 and not line.startswith('**') and not line.startswith('_'):
+                    reasons.append(line)
+                if len(reasons) >= 3:
+                    break
+            if not reasons:
+                reasons = ['AI analysis', c['trend'], f"Vol {c['vol_ratio']:.1f}x"]
+        return {
+            "symbol": c["symbol"],
             "direction": direction,
-            "change": round(change, 2),
-            "volume": volume,
+            "change": round(c["pct_4h"], 2),
+            "volume_ratio": round(c["vol_ratio"], 2),
             "confidence": confidence,
             "reasons": reasons,
-            "current_price": current_price,
+            "current_price": c["current_price"],
+            "ai_score": score,
+            "entry_strategy": entry_strategy,
+            "atr_pct": c["atr_pct"],
+            "support": c.get("support"),
+            "resistance": c.get("resistance"),
         }
-        logger.info(f"Result for {pair}: dir={direction}, conf={confidence}, reasons={reasons}")
-        # Enrich with trade params if chat_id provided
-        if chat_id:
-            result = enrich_trade_params(result, chat_id)
-        else:
-            # Basic entry/sl/tp/rrr without sizing (using defaults)
-            risk_pct = 0.05; target_pct = 0.10
-            entry = current_price
-            if direction == "LONG":
-                sl = entry * (1 - risk_pct); tp = entry * (1 + target_pct)
-            else:
-                sl = entry * (1 + risk_pct); tp = entry * (1 - target_pct)
-            result.update({
-                "entry": round(entry, 4),
-                "sl": round(sl, 4),
-                "tp": round(tp, 4),
-                "rrr": round(target_pct/risk_pct, 2),
-            })
-        results.append(result)
-        logger.info(f"Completed {pair}, total results: {len(results)}/{len(pairs_to_scan)}")
-    # Sort by confidence desc, take top 4
-    results.sort(key=lambda x: x["confidence"], reverse=True)
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_c = {executor.submit(score_candidate, c): c for c in top_candidates}
+        for future in concurrent.futures.as_completed(future_to_c):
+            c = future_to_c[future]
+            try:
+                result = future.result(timeout=10)
+                if chat_id:
+                    result = enrich_trade_params(result, chat_id)
+                results.append(result)
+                logger.info(f"Scan {c['symbol']}: score={result['ai_score']}, dir={result['direction']}, conf={result['confidence']}")
+            except Exception as e:
+                logger.error(f"StepFun scoring failed for {c['symbol']}: {e}")
+                fallback = {
+                    "symbol": c["symbol"], "direction": "LONG" if c["pct_4h"]>=0 else "SHORT",
+                    "change": round(c["pct_4h"],2), "volume_ratio": round(c["vol_ratio"],2),
+                    "confidence": max(80, min(89, int(85+abs(c["pct_4h"])*0.5))),
+                    "reasons": ["Fallback"], "current_price": c["current_price"],
+                    "ai_score": 5, "entry_strategy": "market", "atr_pct": c["atr_pct"],
+                    "support": c.get("support"), "resistance": c.get("resistance"),
+                }
+                if chat_id: fallback = enrich_trade_params(fallback, chat_id)
+                results.append(fallback)
+    results.sort(key=lambda x: x.get("ai_score", 0), reverse=True)
     top4 = results[:4]
     logger.info(f"ai_scan_pairs complete: returning {len(top4)} results")
     return top4
+
+# ── Scan Execution & Logging ──
+async def log_trade_to_channel(bot, trade_data: dict, trade_id):
+    """Send executed trade notification to @RightclawTrade channel."""
+    channel = os.getenv("RIGHTCLAW_CHANNEL", "@RightclawTrade")
+    p = trade_data
+    text = (
+        f"🚨 **NEW TRADE**\n\n"
+        f"Pair: {p['symbol']} {p['direction']}\n"
+        f"Entry: ${p.get('entry',0):,.4f}\n"
+        f"SL: ${p.get('sl',0):,.4f}  |  TP: ${p.get('tp',0):,.4f}\n"
+        f"Confidence: {p.get('confidence',0)}%  |  AI Score: {p.get('ai_score',0)}/10\n"
+        f"Mode: MANUAL (scan)"
+    )
+    try:
+        await bot.send_message(chat_id=channel, text=text, parse_mode="Markdown", disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Channel log failed: {e}")
+
+def save_position(trade_data: dict, trade_id):
+    """Append executed trade to user_data/positions.json."""
+    path = Path(__file__).parent.parent / "user_data" / "positions.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "pair": trade_data.get('symbol'),
+        "direction": trade_data.get('direction'),
+        "entry_price": trade_data.get('entry'),
+        "entry_time": datetime.now(timezone.utc).isoformat(),
+        "sl": trade_data.get('sl'),
+        "tp": trade_data.get('tp'),
+        "confidence": trade_data.get('confidence'),
+        "ai_score": trade_data.get('ai_score'),
+        "mode": "manual",
+        "trade_id": trade_id,
+    }
+    try:
+        if path.exists():
+            with open(path, "r+", encoding="utf-8") as f:
+                data = json.load(f)
+                data.append(entry)
+                f.seek(0); f.truncate()
+                json.dump(data, f, indent=2)
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump([entry], f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save position: {e}")
+
+async def exec_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Direct execution from scan result: forcebuy and confirm."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer("⏳ Executing...")
+    chat_id = q.message.chat_id
+    symbol = q.data.split("_", 2)[2]  # exec_confirm_BTC/USDT
+    scan_results = user_state.get(chat_id, {}).get("scan_results", {})
+    p = scan_results.get(symbol)
+    if not p:
+        await q.edit_message_text("❌ Scan data expired. Run /scan again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+        return
+    user_id = q.from_user.id
+    if not is_pair_valid_for_user(p['symbol'], user_id):
+        await q.edit_message_text(
+            f"❌ Pair not available on exchange.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
+        )
+        return
+    # Prepare forcebuy
+    exchange_pair = p["symbol"]
+    if exchange_pair.endswith("/USDT"):
+        exchange_pair = exchange_pair + ":USDT"
+    payload = {"pair": exchange_pair, "side": p["direction"].lower()}
+    try:
+        r = requests.post(f"{API_URL}/api/v1/forcebuy", json=payload, auth=(API_USER, API_PASS), timeout=10)
+        if r.status_code in (200, 201):
+            resp = r.json()
+            trade_id = resp.get("trade_id", "unknown")
+            # Log to channel and save position
+            await log_trade_to_channel(ctx.bot, p, trade_id)
+            save_position(p, trade_id)
+            await q.edit_message_text(
+                f"✅ **Trade Executed**\n\nPair: {p['symbol']} {p['direction']}\nTrade ID: `{trade_id}`\n\nView in /positions",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 POSITIONS", callback_data="positions")]])
+            )
+        else:
+            await q.edit_message_text(
+                f"❌ Execution failed: {r.status_code} {r.text[:150]}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 RETRY", callback_data=f"exec_confirm_{symbol}")],
+                    [InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]
+                ])
+            )
+    except Exception as e:
+        await q.edit_message_text(
+            f"❌ Error: {str(e)[:100]}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 RETRY", callback_data=f"exec_confirm_{symbol}")],
+                [InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]
+            ])
+        )
+
+async def skip_pair_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Skip (delete) a scan result message and clean up."""
+    q = update.callback_query
+    await q.answer("⏭ Skipped")
+    symbol = q.data.split("_", 1)[1]  # skip_BTC/USDT
+    chat_id = q.message.chat_id
+    # Remove from scan_results
+    if chat_id in user_state and "scan_results" in user_state[chat_id]:
+        user_state[chat_id]["scan_results"].pop(symbol, None)
+    # Delete message
+    try:
+        await q.message.delete()
+    except Exception as e:
+        logger.debug(f"Skip delete failed: {e}")
+        await q.edit_message_text("⏭ Skipped", reply_markup=None)
 
 # ── UI Builders ──
 def mode_button(mode):
@@ -850,15 +1261,15 @@ def fetch_market_data():
     ]
     lines = []
     sources = []
-    for label, bingx_sym, binance_sym, okx_sym, cg_id in pairs:
+    for label, bybit_sym, binance_sym, okx_sym, cg_id in pairs:
         price, change, source = None, None, None
-        # BingX
+        # Bybit
         try:
-            ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": bingx_sym})
-            if ticker and "data" in ticker:
-                d = ticker["data"]
-                price, change = float(d["lastPrice"]), float(d["priceChangePercent"])
-                source = "BingX"
+            ticker = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear", "symbol": bybit_sym})
+            if ticker and ticker.get("retCode") == 0:
+                d = ticker["result"]["list"][0]
+                price, change = float(d["lastPrice"]), float(d.get("price24hPcnt", 0))
+                source = "Bybit"
         except Exception:
             pass
         # Binance
@@ -973,20 +1384,20 @@ async def market_now_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ]
     bal_line = get_balance_display(chat_id)
     message = "📈 Market Now\n\n" + bal_line + "\n\n"
-    sources = {"BingX": False, "Binance": False, "OKX": False, "CoinGecko": False}
+    sources = {"Bybit": False, "Binance": False, "OKX": False, "CoinGecko": False}
     for label, bingx_sym, binance_sym, okx_sym, cg_id in pairs:
         price = None
         change = None
         source = None
-        # 1. Try BingX
+        # 1. Try Bybit
         try:
-            ticker = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": bingx_sym})
-            if ticker and "data" in ticker:
-                d = ticker["data"]
+            ticker = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear", "symbol": bybit_sym})
+            if ticker and ticker.get("retCode") == 0:
+                d = ticker["result"]["list"][0]
                 price = float(d.get("lastPrice", 0))
-                change = float(d.get("priceChangePercent", 0))
-                source = "BingX"
-                sources["BingX"] = True
+                change = float(d.get("price24hPcnt", 0))
+                source = "Bybit"
+                sources["Bybit"] = True
         except Exception:
             pass
         # 2. Binance fallback
@@ -1314,7 +1725,7 @@ async def manual_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_state[chat_id]['pair_detail_back'] = 'manual_mode'
     state = get_state(chat_id)
     state["mode"] = "manual"
-    pairs = get_bingx_hot_pairs(limit=6)
+    pairs = get_bybit_hot_pairs(limit=6)
     kb = []
     for i in range(0, len(pairs), 2):
         row = []
@@ -1334,7 +1745,7 @@ async def add_pair_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Set back-context for pair detail
     user_state.setdefault(chat_id, {})
     user_state[chat_id]['pair_detail_back'] = 'add_pair_menu'
-    top = get_bingx_hot_pairs(limit=10)
+    top = get_bybit_hot_pairs(limit=10)
     kb = []
     for i in range(0, len(top), 2):
         row = []
@@ -1366,10 +1777,10 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Handle BingX URL paste (with or without http prefix)
     text_lower = text.lower()
-    if "bingx.com" in text_lower:
+    if "bybit.com" in text_lower:
         print(f"[DEBUG] BingX URL detected: {text[:80]}")
-        logger.info(f"BingX URL detected: {text[:80]}")
-        pair = extract_pair_from_bingx_url(text)
+        logger.info(f"Bybit URL detected: {text[:80]}")
+        pair = extract_pair_from_bybit_url(text)
         print(f"[DEBUG] Extracted pair: {pair}")
         logger.info(f"Extracted pair: {pair}")
         if pair:
@@ -1377,7 +1788,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             user_id = update.effective_user.id
             if not is_pair_valid_for_user(pair, user_id):
                 await update.message.reply_text(
-                    f"❌ **Pair not available**\n\n{pair} is not listed on BingX (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
+                    f"❌ **Pair not available**\n\n{pair} is not listed on Bybit (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]])
                 )
@@ -1463,7 +1874,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             user_id = update.effective_user.id
             if not is_pair_valid_for_user(pair, user_id):
                 await update.message.reply_text(
-                    f"❌ **Pair not available**\n\n{pair} is not listed on BingX (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
+                    f"❌ **Pair not available**\n\n{pair} is not listed on Bybit (validation failed).\n\nTry a different pair like BTC/USDT, ETH/USDT, SOL/USDT.",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]])
                 )
@@ -1539,21 +1950,28 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if "/" not in text:
             await update.message.reply_text("❌ Format: BASE/QUOTE (e.g., BTC/USDT)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
             return
-        if validate_pair_on_bingx(text):
+        if validate_pair_on_bybit(text):
             user_state[chat_id]["selected_pair"] = {"symbol": text, "direction": "LONG"}
             state["awaiting_pair_input"] = False
             await update.message.reply_text(f"✅ Pair {text} added!\n\nUse /start to continue.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 MAIN", callback_data="main")]]))
         else:
-            await update.message.reply_text("❌ Pair not on BingX. Try again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
+            await update.message.reply_text("❌ Pair not on Bybit. Try again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
 
-def validate_pair_on_bingx(pair):
-    symbol = pair.replace("/", "").upper()
-    data = bingx_signed_request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
-    return data is not None and "data" in data
+def validate_pair_on_bybit(pair):
+    """Validate pair exists on Bybit (USDT-margined linear perpetual)."""
+    if not pair.endswith("/USDT"):
+        return False
+    try:
+        base = pair.split("/")[0]
+        bybit_symbol = f"{base}USDT"
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear", "symbol": bybit_symbol}, timeout=5)
+        return data is not None and data.get("retCode") == 0 and len(data.get("result", {}).get("list", [])) > 0
+    except Exception:
+        return False
 
-def extract_pair_from_bingx_url(url):
-    """Extract pair from BingX perpetual URL.
-    Example: https://bingx.com/en/perpetual/GENIUS-USDT -> GENIUS/USDT
+def extract_pair_from_bybit_url(url):
+    """Extract pair from Bybit perpetual URL.
+    Example: https://bybit.com/en/perpetual/GENIUS-USDT -> GENIUS/USDT
     Returns None if pair is not USDT-margined.
     """
     try:
@@ -1864,7 +2282,7 @@ async def execute_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = q.from_user.id
     if not is_pair_valid_for_user(p['symbol'], user_id):
         await q.edit_message_text(
-            f"❌ **Pair not available**\n\n{p['symbol']} is not listed on BingX (validation failed).\n\nSelect a valid pair and try again.",
+            f"❌ **Pair not available**\n\n{p['symbol']} is not listed on Bybit (validation failed).\n\nSelect a valid pair and try again.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")]])
         )
         return
@@ -2327,31 +2745,44 @@ async def refresh_scan_callback(update: Update, context: ContextTypes.DEFAULT_TY
     asyncio.create_task(do_refresh())
 
 async def send_scan_message(chat_id, setups, context):
-    """Format and send scan results with a refresh button."""
-    text = "✅ **Scan Complete - Top 4 Pairs:**\n\nSelect a pair to view details & execute:\n\n"
-    for i, p in enumerate(setups, 1):
-        # Extract enriched params
+    """Send 4 separate scan result messages, each with EXECUTE and SKIP buttons."""
+    # Store results in user_state for later retrieval by callbacks
+    user_state.setdefault(chat_id, {})['scan_results'] = {p['symbol']: p for p in setups}
+    for idx, p in enumerate(setups, 1):
+        # Calculate SL/TP percentages for display
         entry = p.get('entry', p.get('current_price', 0))
         sl = p.get('sl', 0)
         tp = p.get('tp', 0)
-        rrr = p.get('rrr', 0)
-        qty = p.get('quantity', 0)
-        # Calculate percentages for display (P&L impact at SL/TP)
         if p.get('direction') == 'LONG':
             sl_pct = ((sl - entry) / entry * 100) if entry else 0
             tp_pct = ((tp - entry) / entry * 100) if entry else 0
         else:
             sl_pct = ((entry - sl) / entry * 100) if entry else 0
             tp_pct = ((entry - tp) / entry * 100) if entry else 0
-        price_str = f" @ ${p['current_price']:,.2f}" if p.get('current_price') else ""
-        text += (
-            f"{i}. {p['symbol']} {p['direction']} - {p['change']:+.2f}%{price_str}\n"
-            f"   SL: {sl_pct:.1f}% | TP: {tp_pct:.1f}% | RRR: {rrr:.1f} | Qty: {qty:.6f}\n\n"
+        # Format block
+        text = (
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 SCAN RESULT #{idx}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Pair: {p['symbol']}\n"
+            f"Direction: {p['direction']}\n"
+            f"Confidence: {p['confidence']}%\n"
+            f"Entry: {p.get('entry_strategy','market').upper()} @ ${p.get('current_price',0):,.2f}\n"
+            f"SL: ${sl:,.4f} (-{abs(sl_pct):.1f}% margin)\n"
+            f"TP: ${tp:,.4f} (+{tp_pct:.1f}% margin)\n"
+            f"Volume: {p.get('volume_ratio',0):.1f}x average 🔥\n"
+            f"4H Move: {p.get('change',0):+.1f}%\n"
+            f"AI Score: {p.get('ai_score',0)}/10\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
         )
-    kb = grid_2x2(setups)
-    kb.append([InlineKeyboardButton("🔄 REFRESH", callback_data="refresh_scan")])
-    kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="session_mode")])
-    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ EXECUTE", callback_data=f"exec_confirm_{p['symbol']}")],
+            [InlineKeyboardButton("⏭ SKIP", callback_data=f"skip_{p['symbol']}")]
+        ])
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Failed to send scan result for {p['symbol']}: {e}")
 
 # ── Alert ──
 async def alert_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2622,12 +3053,16 @@ def main():
     app.add_handler(CallbackQueryHandler(alert_set_callback, pattern=r'^/alert '))
     app.add_handler(CallbackQueryHandler(refresh_scan_callback, pattern=r'^refresh_scan$'))
     app.add_handler(CallbackQueryHandler(refresh_pair_detail_cb, pattern=r'^refresh_pair_'))
+    app.add_handler(CallbackQueryHandler(exec_confirm_cb, pattern=r'^exec_confirm_'))
+    app.add_handler(CallbackQueryHandler(skip_pair_cb, pattern=r'^skip_'))
     app.add_error_handler(error_handler)
     logger.info("Starting Clawmimoto Telegram UI...")
     # Start background snapshot thread (every 4 hours)
     def _snapshot_thread():
         """Runs in separate thread; uses synchronous requests to Telegram API."""
-        import time
+        import time, json
+        CHANNEL_LOG_PATH = Path("/data/.openclaw/workspace/clawmimoto-bot/user_data/channel_message_log.json")
+        CHANNEL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         while True:
             time.sleep(14400)  # 4 hours
             try:
@@ -2639,7 +3074,26 @@ def main():
                 payload = {"chat_id": chat_id, "text": msg, "parse_mode": "Markdown", "disable_web_page_preview": True}
                 r = requests.post(url, json=payload, timeout=10)
                 if r.status_code == 200:
-                    logger.info(f"✅ Market snapshot sent to {chat_id}")
+                    result = r.json()
+                    msg_id = result.get("result", {}).get("message_id")
+                    if msg_id:
+                        entry = {
+                            "message_id": msg_id,
+                            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "chat_id": chat_id,
+                            "type": "market_snapshot",
+                        }
+                        logs = []
+                        if CHANNEL_LOG_PATH.exists():
+                            try:
+                                with open(CHANNEL_LOG_PATH, "r", encoding="utf-8") as lf:
+                                    logs = json.load(lf)
+                            except Exception:
+                                logs = []
+                        logs.append(entry)
+                        with open(CHANNEL_LOG_PATH, "w", encoding="utf-8") as lf:
+                            json.dump(logs, lf, indent=2, ensure_ascii=False)
+                        logger.info(f"✅ Market snapshot sent to {chat_id} (msg_id={msg_id})")
                     continue
                 # Fallback to DM if channel fails (e.g., bot not in channel)
                 chat_id = os.getenv("TELEGRAM_CHAT_ID", "7093901111")

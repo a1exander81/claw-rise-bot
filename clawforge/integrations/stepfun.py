@@ -16,7 +16,7 @@ def get_sentiment_score(pair: str, context: str = "") -> float:
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "step-1-flash",
+            "model": "step-3.5-flash",
             "messages": [
                 {"role": "system", "content": "You are a crypto market sentiment analyzer. Reply with only a number between 0.0 (very bearish) and 1.0 (very bullish)."},
                 {"role": "user", "content": f"Sentiment for {pair}? {context}"}
