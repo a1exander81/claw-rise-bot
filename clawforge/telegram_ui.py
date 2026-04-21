@@ -28,6 +28,15 @@ import psutil
 import subprocess
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ── Utility: async message deletion ──
+async def delete_after_delay(bot, chat_id: int, msg_id: int, delay: int = 300):
+    """Delete a Telegram message after `delay` seconds (default 5 minutes)."""
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+    except Exception:
+        pass
+
 # ── Trading Trivia Facts ──
 TRADING_FACTS = [
     "📜 **Fact:** The first recorded stock exchange was in Amsterdam, 1602 - the Dutch East India Company.",
@@ -610,6 +619,23 @@ def get_balance_display(chat_id: int) -> str:
     balance_str = format_balance(real, mock, mode)
     margin_pct = state.get("margin", 2.0)
     return f"💎 Balance: {balance_str} | Margin: {margin_pct:.1f}%"
+
+def get_mode_header(chat_id: int) -> str:
+    """Return mode indicator string: '🔵 MOCK | 🤖 SESSION' or '🔴 REAL | 🎯 MANUAL'"""
+    state = get_state(chat_id)
+    mode = state.get("trade_mode", "MOCK")
+    trading_mode = state.get("mode", "manual")
+    mode_emoji = "🤖" if trading_mode == "session" else "🎯"
+    dry_emoji = "🔵" if mode == "MOCK" else "🔴"
+    return f"{dry_emoji} {mode} | {mode_emoji} {trading_mode.upper()}"
+
+def get_open_trades_count() -> int:
+    """Return count of currently open trades."""
+    try:
+        trades = api_get("/api/v1/status") or []
+        return len([t for t in trades if t.get('is_open', False)])
+    except Exception:
+        return 0
 
 def enrich_trade_params(pair_result, chat_id):
     """Add concrete trade parameters (entry, sl, tp, rrr, sizing) based on user state and balance."""
@@ -1319,16 +1345,31 @@ async def main_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     chat_id = q.message.chat_id
     state = get_state(chat_id)
-    news = get_market_news()
-    bal_line = get_balance_display(chat_id)
+    real, mock = get_balance()
+    bal = format_balance(real, mock, state.get('trade_mode','MOCK'))
+    open_count = get_open_trades_count()
+    mode_header = get_mode_header(chat_id)
+    # Build new main menu
+    text = (
+        "╔══════════════════════╗\n"
+        "║ 🦅 CLAWMIMOTO ║\n"
+        "║ Trading Terminal ║\n"
+        "╚══════════════════════╝\n\n"
+        f"{mode_header}\n"
+        f"💰 Balance: {bal} USDT\n"
+        f"📊 Open: {open_count} trades"
+    )
     kb = [
-        [mode_button(state["trade_mode"])],
-        [wins_button(), gains_button()],
-        [InlineKeyboardButton("📈 TRADE MENU", callback_data="trade_menu")],
-        [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
-        [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
+        [InlineKeyboardButton("📊 SCAN", callback_data="ai_scan"),
+         InlineKeyboardButton("💰 BALANCE", callback_data="balance")],
+        [InlineKeyboardButton("📈 POSITIONS", callback_data="positions"),
+         InlineKeyboardButton("📰 NEWS", callback_data="market_now")],
+        [InlineKeyboardButton("🎯 SESSION MODE", callback_data="session_mode"),
+         InlineKeyboardButton("🔫 MANUAL MODE", callback_data="manual_mode")],
+        [InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings"),
+         InlineKeyboardButton("📋 HISTORY", callback_data="history")],
     ]
-    await q.edit_message_text(f"🏠 **Clawmimoto Command Center**\n\n{bal_line}\n\n{news}", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def toggle_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -1349,9 +1390,39 @@ async def show_balance_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = q.message.chat_id
     state = get_state(chat_id)
     real, mock = get_balance()
-    bal = format_balance(real, mock, state["trade_mode"])
-    mode_label = "REAL" if state["trade_mode"] == "REAL" else "MOCK"
-    await q.edit_message_text(f"💼 **Balance ({mode_label})**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="main")]]))
+    real_str = f"${real:,.2f} USDT" if real is not None else "N/A"
+    mock_str = f"{mock:,.0f} CLUSDT"
+    mode = state.get("trade_mode", "MOCK")
+    # P&L today (realized + unrealized)
+    pnl_pct = 0.0
+    try:
+        trades = api_get("/api/v1/status") or []
+        today = datetime.now(timezone.utc).date()
+        closed_today = []
+        for t in trades:
+            close_date = None
+            if t.get('close_date'):
+                try:
+                    close_date = datetime.fromisoformat(t['close_date'].replace('Z','+00:00')).date()
+                except: pass
+            if close_date == today:
+                closed_today.append(t)
+        pnl_pct = sum(t.get('profit_pct',0) for t in closed_today)
+    except Exception:
+        pass
+    open_count = get_open_trades_count()
+    text = (
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 BALANCE\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Real: {real_str}\n"
+        f"Mock: {mock_str}\n"
+        f"Mode: {mode}\n"
+        f"P&L Today: {pnl_pct:+.1f}%\n"
+        f"Open Trades: {open_count}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
 
 async def show_stats_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -2251,8 +2322,9 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     trades_list = api_get("/api/v1/status") or []
     bal = get_balance_display(chat_id)
+    mode_header = get_mode_header(chat_id)
     if not trades_list:
-        await q.edit_message_text(f"📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
+        await q.edit_message_text(f"{mode_header}\n\n📊 **No open positions**\n\n{bal}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
         return
 
     # Build 2x3 grid for first 6 pairs (newest first)
@@ -2278,7 +2350,7 @@ async def positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("✅ CLOSED", callback_data="closed_positions")])
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
-    await q.edit_message_text(f"📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
+    await q.edit_message_text(f"{mode_header}\n\n📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Refresh the positions list (called from Refresh button)."""
@@ -2302,7 +2374,8 @@ async def refresh_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="refresh_positions")])
     buttons.append([InlineKeyboardButton("✅ CLOSED", callback_data="closed_positions")])
     buttons.append([InlineKeyboardButton("⬅️ BACK", callback_data="main")])
-    await q.edit_message_text(f"📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
+    mode_header = get_mode_header(chat_id)
+    await q.edit_message_text(f"{mode_header}\n\n📊 **Open Positions**\n\n{bal}\n\nSelect one:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def other_positions_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show additional positions beyond the first 6 (overflow list)."""
@@ -2579,11 +2652,15 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         [InlineKeyboardButton("⬅️ MAIN", callback_data="main")]
                     ])
                     await q.edit_message_text(msg, reply_markup=kb)
+                    # Auto-delete confirmation after 5 minutes
+                    asyncio.create_task(delete_after_delay(ctx.bot, chat_id, q.message.message_id, delay=300))
                     return
         except Exception as e:
             logger.debug(f"Could not fetch new trade ID: {e}")
         # Fallback: no direct position button
         await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ MAIN", callback_data="main")]]))
+        # Auto-delete confirmation after 5 minutes
+        asyncio.create_task(delete_after_delay(ctx.bot, chat_id, q.message.message_id, delay=300))
     else:
         msg = "❌ **Execution failed**\n\n"
         if error_msg:
@@ -2594,6 +2671,8 @@ async def confirm_exec_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ BACK", callback_data="ai_scan")],
         [InlineKeyboardButton("⬅️ MAIN", callback_data="main")]
     ]))
+    # Auto-delete error confirmation after 5 minutes
+    asyncio.create_task(delete_after_delay(ctx.bot, chat_id, q.message.message_id, delay=300))
 
 # ── Watch Command (Bot Status) ──
 async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2980,8 +3059,18 @@ async def refresh_scan_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def send_scan_message(chat_id, setups, context):
     """Send 4 separate scan result messages, each with EXECUTE and SKIP buttons."""
+    # Clear old scan messages for this user first (auto-delete)
+    scan_msg_ids = user_state.get(chat_id, {}).get('scan_msg_ids', [])
+    for old_msg_id in scan_msg_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+        except Exception:
+            pass
+    user_state[chat_id]['scan_msg_ids'] = []
+
     # Store results in user_state for later retrieval by callbacks
     user_state.setdefault(chat_id, {})['scan_results'] = {p['symbol']: p for p in setups}
+    mode_header = get_mode_header(chat_id)
     for idx, p in enumerate(setups, 1):
         # Calculate SL/TP percentages for display
         entry = p.get('entry', p.get('current_price', 0))
@@ -2993,20 +3082,33 @@ async def send_scan_message(chat_id, setups, context):
         else:
             sl_pct = ((entry - sl) / entry * 100) if entry else 0
             tp_pct = ((entry - tp) / entry * 100) if entry else 0
+        # Score-based color coding
+        ai_score = p.get('ai_score', 0)
+        if ai_score >= 8:
+            score_emoji = "🟢"
+            urgency = "STRONG SETUP"
+        elif ai_score >= 6:
+            score_emoji = "🟡"
+            urgency = "MODERATE"
+        else:
+            score_emoji = "🔴"
+            urgency = "WEAK — SKIP?"
+        dir_emoji = "📈" if p['direction'] == 'LONG' else "📉"
+        session = p.get('session', 'manual')
         # Format block
         text = (
+            f"{mode_header}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎯 SCAN RESULT #{idx}\n"
+            f"{score_emoji} SCAN #{idx} — {urgency}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Pair: {p['symbol']}\n"
-            f"Direction: {p['direction']}\n"
-            f"Confidence: {p['confidence']}%\n"
-            f"Entry: {p.get('entry_strategy','market').upper()} @ ${p.get('current_price',0):,.2f}\n"
-            f"SL: ${sl:,.4f} (-{abs(sl_pct):.1f}% margin)\n"
-            f"TP: ${tp:,.4f} (+{tp_pct:.1f}% margin)\n"
-            f"Volume: {p.get('volume_ratio',0):.1f}x average 🔥\n"
-            f"4H Move: {p.get('change',0):+.1f}%\n"
-            f"AI Score: {p.get('ai_score',0)}/10\n"
+            f"🪙 {p['symbol']} | {p['direction']} {dir_emoji}\n"
+            f"💰 Entry: {p.get('entry_strategy','market').upper()} @ ${p.get('current_price',0):,.2f}\n"
+            f"🛡 SL: ${sl:,.4f} (-{abs(sl_pct):.1f}% margin)\n"
+            f"🎯 TP: ${tp:,.4f} (+{tp_pct:.1f}% margin)\n"
+            f"📊 RRR: {p.get('rrr',0):.1f}:1\n"
+            f"📈 Volume: {p.get('volume_ratio',0):.1f}x | 4H: {p.get('change',0):+.1f}%\n"
+            f"🤖 AI: {ai_score}/10 | Conf: {p.get('confidence',0)}%\n"
+            f"🕐 Session: {session}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━"
         )
         kb = InlineKeyboardMarkup([
@@ -3014,7 +3116,9 @@ async def send_scan_message(chat_id, setups, context):
             [InlineKeyboardButton("⏭ SKIP", callback_data=f"skip_{p['symbol']}")]
         ])
         try:
-            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="Markdown")
+            msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="Markdown")
+            # Track message ID for auto-delete on next scan
+            user_state[chat_id].setdefault('scan_msg_ids', []).append(msg.message_id)
         except Exception as e:
             logger.error(f"Failed to send scan result for {p['symbol']}: {e}")
 
