@@ -288,7 +288,7 @@ def run_prescan(session_key: str):
         "timestamp": utc_now().isoformat(),
         "results": results
     }
-    out_path = Path(__file__).parent / "session_cache" / f"{session_key}_prescan.json"
+    out_path = Path(__file__).absolute().parent / "session_cache" / f"{session_key}_prescan.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, 'w') as f:
         json.dump(out, f, indent=2)

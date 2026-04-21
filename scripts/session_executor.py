@@ -8,15 +8,19 @@ Also runs autoskip via cron for expired sessions.
 import os
 import sys
 import json
+import base64
 import logging
 import requests
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "clawforge"))
-
+# ── Freqtrade API config (matches telegram_ui.py) ──
 FREQTRADE_API_URL = os.getenv("FREQTRADE_API_URL", "http://127.0.0.1:8080")
-FREQTRADE_API_KEY = os.getenv("FREQTRADE_API_KEY", "")
+FREQTRADE_API_USER = os.getenv("FREQTRADE_API_USER", "admin")
+FREQTRADE_API_PASS = os.getenv("FREQTRADE_API_PASS", "admin")
+AUTH_HEADER = {
+    "Authorization": f"Basic {base64.b64encode(f'{FREQTRADE_API_USER}:{FREQTRADE_API_PASS}'.encode()).decode()}"
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,14 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 def api_post(endpoint: str, data: dict):
-    """Call Freqtrade API."""
+    """Call Freqtrade API with Basic Auth."""
     url = f"{FREQTRADE_API_URL}{endpoint}"
-    headers = {"Content-Type": "application/json"}
-    if FREQTRADE_API_KEY:
-        headers["Authorization"] = f"Bearer {FREQTRADE_API_KEY}"
     try:
-        r = requests.post(url, json=data, headers=headers, timeout=10)
-        return r.status_code == 200, r.json() if r.status_code == 200 else r.text
+        r = requests.post(url, json=data, headers=AUTH_HEADER, timeout=10)
+        if r.status_code == 200:
+            return True, r.json()
+        else:
+            error_msg = f"{r.status_code} - {r.text[:200]}"
+            logger.error(f"API POST {endpoint} failed: {error_msg}")
+            return False, error_msg
     except Exception as e:
         logger.error(f"API POST {endpoint} failed: {e}")
         return False, str(e)
@@ -52,8 +58,10 @@ def load_prescan_results(session_key: str) -> dict | None:
 
 def execute_trade(pair: str, direction: str, entry: float, sl: float, tp: float, margin_pct: float):
     """Execute trade via Freqtrade forcebuy."""
+    # Convert to Freqtrade futures pair format: ETH/USDT → ETH/USDT:USDT
+    exchange_pair = pair if ":USDT" in pair else f"{pair}:USDT"
     payload = {
-        "pair": pair,
+        "pair": exchange_pair,
         "price": entry,
         "direction": direction.lower(),
         "stake_amount": None,
@@ -132,7 +140,7 @@ SESSIONS = {
     "ny":        {"name": "NY",        "pairs": ["BTC/USDT","ETH/USDT"], "margin_pct": 2.0},
 }
 
-CACHE_DIR = Path(__file__).parent / "session_cache"
+CACHE_DIR = Path(__file__).absolute().parent / "session_cache"
 EXPIRE_MINUTES = 10
 
 
