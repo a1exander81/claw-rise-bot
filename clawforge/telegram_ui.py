@@ -656,12 +656,12 @@ def get_bybit_hot_pairs(limit: int = 5) -> list:
 def get_bybit_top_movers(limit: int = 20) -> list:
     """
     Fetch top movers from Bybit with STRICT filters:
-    - Min USD turnover (price × volume) > $100M
+    - Min USD turnover (turnover24h) > $50M
     - Max 4H move: ±15% (avoid already-moved pairs)
     - Min price: $0.10
     - Volume spike: > 2× 20-candle average
     - Exclude stablecoins (USDC, BUSD, DAI, TUSD, FDUSD)
-    - Always include BTC, ETH, SOL, BNB as baseline
+    - Always include BTC, ETH, SOL as baseline
     - Add top 3 additional movers only (no duplicates)
     Returns list of symbols like "BTC/USDT".
     """
@@ -671,8 +671,8 @@ def get_bybit_top_movers(limit: int = 20) -> list:
             raise ValueError("Bybit tickers API failed")
         items = data.get("result", {}).get("list", [])
         
-        baseline = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
-        baseline_bases = {"BTC", "ETH", "SOL", "BNB"}
+        baseline = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+        baseline_bases = {"BTC", "ETH", "SOL"}
         candidates = []
         stable_bases = {"USDC", "BUSD", "DAI", "TUSD", "FDUSD"}  # exclude stablecoins
         for item in items:
@@ -686,15 +686,15 @@ def get_bybit_top_movers(limit: int = 20) -> list:
             if base in baseline_bases:
                 continue
             try:
-                vol_24h = float(item.get("volume24h", 0))
+                turnover_24h = float(item.get("turnover24h", 0))   # USD turnover
                 last_price = float(item.get("lastPrice", 0))
             except (TypeError, ValueError):
                 continue
             # Min price $0.10
             if last_price <= 0.10:
                 continue
-            # Min USD turnover > $100M (liquidity filter)
-            if last_price * vol_24h < 100_000_000:
+            # Min USD turnover > $50M (liquidity filter)
+            if turnover_24h < 50_000_000:
                 continue
             # Fetch 4H candles
             try:
@@ -709,7 +709,8 @@ def get_bybit_top_movers(limit: int = 20) -> list:
                         volumes = [float(k[5]) for k in k_list]
                         avg_vol = sum(volumes) / len(volumes)
                         # Volume spike: > 2x avg
-                        if vol_24h < avg_vol * 2.0:
+                        vol_24h_base = float(item.get("volume24h", 0))
+                        if vol_24h_base < avg_vol * 2.0:
                             continue
                         # 4H price change (close-to-close)
                         open_4h = float(k_list[-1][4])   # oldest close
@@ -724,9 +725,9 @@ def get_bybit_top_movers(limit: int = 20) -> list:
                             "symbol": f"{base}/USDT",
                             "bybit_symbol": symbol,
                             "price": last_price,
-                            "vol_24h": vol_24h,
+                            "vol_24h": vol_24h_base,
                             "avg_vol": avg_vol,
-                            "vol_ratio": vol_24h / avg_vol if avg_vol > 0 else 0,
+                            "vol_ratio": vol_24h_base / avg_vol if avg_vol > 0 else 0,
                             "pct_4h": pct_4h,
                         })
             except Exception as e:
@@ -740,7 +741,7 @@ def get_bybit_top_movers(limit: int = 20) -> list:
         return final_list
     except Exception as e:
         logger.error(f"get_bybit_top_movers failed: {e}")
-        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+        return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
 def calculate_indicators(symbol: str) -> dict:
     """
@@ -837,7 +838,7 @@ def call_stepfun_skill(prompt: str, retries: int = 2) -> str | None:
     for attempt in range(retries + 1):
         try:
             logger.debug(f"StepFun call attempt {attempt+1}/{retries+1} for: {prompt[:60]}...")
-            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=10)
+            r = requests.post("https://api.stepfun.ai/v1/chat/completions", json=payload, headers=headers, timeout=30)
             if r.status_code == 200:
                 return r.json()["choices"][0]["message"]["content"]
             logger.warning(f"StepFun HTTP {r.status_code}: {r.text[:100]}")
@@ -915,29 +916,25 @@ def ai_scan_pairs(custom_pairs=None, chat_id=None):
             f" Give: score, direction (LONG/SHORT), confidence % (80-90), entry strategy (market/limit), key support/resistance levels."
         )
         ai_text = call_stepfun_skill(prompt, retries=1)
-        logger.info(f"StepFun raw response: {ai_text[:200] if ai_text else 'None'}")
+        logger.info(f"StepFun raw: {str(ai_text)[:300]}")
         score = 5
         direction = "LONG" if c["pct_4h"] >= 0 else "SHORT"
         confidence = max(80, min(89, int(85 + abs(c["pct_4h"])*0.5)))
         entry_strategy = "market"
         reasons = ["Volume spike", "AI signal"]
         if ai_text:
-            # Parse score — try multiple patterns for step-3.5-flash format
-            score_patterns = [
-                r'score[\s:]+(\d{1,2})/10',   # "score: 8/10"
-                r'score[\s:]+(\d{1,2})',      # "score: 8" or "score 8"
-                r'(\d{1,2})/10',              # "8/10"
-                r'\b([1-9]|10)\b',           # standalone number
+            # Parse score — new multi-pattern for step-3.5-flash
+            patterns = [
+                r'score[\s:]*([1-9]|10)',
+                r'([1-9]|10)[\s]*/[\s]*10',
+                r'rating[\s:]*([1-9]|10)',
+                r'\b([1-9]|10)\b.*(?:out of|\/)\s*10',
             ]
-            for pat in score_patterns:
-                m = re.search(pat, ai_text, re.IGNORECASE)
+            for pattern in patterns:
+                m = re.search(pattern, ai_text, re.IGNORECASE)
                 if m:
-                    try:
-                        s = int(m.group(1))
-                        if 1 <= s <= 10:
-                            score = s
-                            break
-                    except: pass
+                    score = int(m.group(1))
+                    break
             # Parse direction
             if 'short' in ai_text.lower(): direction = 'SHORT'
             elif 'long' in ai_text.lower(): direction = 'LONG'
@@ -988,7 +985,7 @@ def ai_scan_pairs(custom_pairs=None, chat_id=None):
         for future in concurrent.futures.as_completed(future_to_c):
             c = future_to_c[future]
             try:
-                result = future.result(timeout=10)
+                result = future.result(timeout=35)
                 if chat_id:
                     result = enrich_trade_params(result, chat_id)
                 results.append(result)
@@ -1126,6 +1123,58 @@ async def skip_pair_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.debug(f"Skip delete failed: {e}")
         await q.edit_message_text("⏭ Skipped", reply_markup=None)
+
+# ── Session Mode Callbacks ──
+async def session_approve_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle APPROVE ALL button from prescan alert."""
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    # Extract session key from callback data: session_approve_<session_key>
+    session_key = q.data.replace("session_approve_", "")
+    # Acknowledge immediately
+    await q.edit_message_text(
+        f"✅ **Approved** — executing {session_key.replace('_', ' ').title()} setups...",
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    # Spawn executor as subprocess (non-blocking)
+    import asyncio, subprocess, sys
+    from pathlib import Path
+    script = Path(__file__).parent.parent / "scripts" / "session_executor.py"
+    cmd = [sys.executable, str(script), "approve", session_key, str(chat_id)]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        # Don't wait — let it run and send its own summary
+        asyncio.create_task(proc.wait())
+    except Exception as e:
+        logger.error(f"Failed to start session executor: {e}")
+        await ctx.bot.send_message(chat_id=chat_id, text=f"❌ Executor start failed: {e}")
+
+async def session_skip_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle SKIP SESSION button from prescan alert."""
+    q = update.callback_query
+    await q.answer()
+    session_key = q.data.replace("session_skip_", "")
+    await q.edit_message_text(
+        f"⏭ **Skipped** — {session_key.replace('_', ' ').title()} session cancelled.",
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    # Run skip executor
+    import asyncio, subprocess, sys
+    from pathlib import Path
+    script = Path(__file__).parent.parent / "scripts" / "session_executor.py"
+    cmd = [sys.executable, str(script), "skip", session_key, str(q.message.chat_id)]
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        asyncio.create_task(proc.wait())
+    except Exception as e:
+        logger.error(f"Failed to start session executor: {e}")
 
 # ── UI Builders ──
 def mode_button(mode):
@@ -1761,8 +1810,63 @@ async def other_pair_input_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text("⌨️ **ENTER CUSTOM PAIR**\n\nType ticker (e.g., BTC/USDT) in chat.\nI'll verify on BingX.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="add_pair_menu")]]))
+    await q.edit_message_text("⌨️ **ENTER CUSTOM PAIR**\n\nType ticker (e.g., BTC/USDT) in chat.\nI'll verify on Bybit.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="add_pair_menu")]]))
     user_state[q.message.chat_id]["awaiting_pair_input"] = True
+
+def extract_pair_from_link(url: str):
+    """Extract trading pair symbol from exchange or TradingView links.
+    Supports: Bybit, Binance, BingX, TradingView, Twitter/X cashtags.
+    Returns formatted pair like "BTC/USDT" or None.
+    """
+    import re
+    from urllib.parse import urlparse, parse_qs
+    url = url.strip()
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        path = parsed.path.upper()
+
+        # Bybit — patterns like /spot/trade/BTCUSDT or /contracts/BTCUSDT
+        if "bybit.com" in domain:
+            m = re.search(r'/([A-Z]{2,10})(USDT|USDC|BTC|ETH)', path)
+            if m:
+                base = m.group(1)
+                quote = m.group(2)
+                # Normalize quote to USDT for consistency
+                return f"{base}/USDT"
+
+        # Binance — spot or futures paths
+        if "binance.com" in domain:
+            m = re.search(r'/([A-Z]{2,10})[_-]?(USDT|BTC|ETH)', path)
+            if m:
+                return f"{m.group(1)}/USDT"
+
+        # BingX
+        if "bingx.com" in domain:
+            m = re.search(r'/([A-Z]{2,10})-?(USDT|BTC|ETH)', path)
+            if m:
+                return f"{m.group(1)}/USDT"
+
+        # TradingView — symbol in query param
+        if "tradingview.com" in domain:
+            qs = parse_qs(parsed.query)
+            symbol = qs.get('symbol', [''])[0].upper()
+            m = re.search(r':?([A-Z]{2,10})(USDT|BTC|ETH)', symbol)
+            if m:
+                return f"{m.group(1)}/USDT"
+
+        # Twitter/X — ask StepFun to identify pair from URL context
+        if "twitter.com" in domain or "x.com" in domain:
+            prompt = f"This is a crypto Twitter URL: {url}\nWhat trading pair is being discussed? Reply with only the pair symbol like BTC/USDT or UNKNOWN."
+            ai_text = call_stepfun_skill(prompt, retries=1)
+            if ai_text and "UNKNOWN" not in ai_text.upper():
+                m = re.search(r'([A-Z]{2,10})/USDT', ai_text.upper())
+                if m:
+                    return f"{m.group(1)}/USDT"
+            return None
+    except Exception:
+        pass
+    return None
 
 async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -1774,6 +1878,34 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user_state[chat_id] = {"leverage": 50, "margin": 1, "trade_mode": "MOCK", "selected_pairs": []}
     state = user_state.get(chat_id, {})
     logger.info(f"Text handler: chat={chat_id} text={text[:100]}")
+
+    # NEW — Link scanning: if message starts with http, extract pair and run AI scan
+    if text.startswith("HTTP"):
+        pair = extract_pair_from_link(text)
+        if pair:
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔍 Detected: *{pair}*\nRunning AI scan...",
+                parse_mode="Markdown"
+            )
+            results = ai_scan_pairs(
+                custom_pairs=[pair],
+                chat_id=chat_id
+            )
+            if results:
+                await send_scan_message(chat_id, results, ctx)
+            else:
+                await ctx.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Could not extract pair.\nSend pair directly e.g. BTC/USDT"
+                )
+            return
+        else:
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Could not extract trading pair from link."
+            )
+            return
 
     # Handle BingX URL paste (with or without http prefix)
     text_lower = text.lower()
@@ -3055,6 +3187,8 @@ def main():
     app.add_handler(CallbackQueryHandler(refresh_pair_detail_cb, pattern=r'^refresh_pair_'))
     app.add_handler(CallbackQueryHandler(exec_confirm_cb, pattern=r'^exec_confirm_'))
     app.add_handler(CallbackQueryHandler(skip_pair_cb, pattern=r'^skip_'))
+    app.add_handler(CallbackQueryHandler(session_approve_cb, pattern=r'^session_approve_'))
+    app.add_handler(CallbackQueryHandler(session_skip_cb, pattern=r'^session_skip_'))
     app.add_error_handler(error_handler)
     logger.info("Starting Clawmimoto Telegram UI...")
     # Start background snapshot thread (every 4 hours)
