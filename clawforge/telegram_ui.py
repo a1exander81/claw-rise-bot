@@ -480,6 +480,7 @@ def enrich_trade_params(pair_result, chat_id):
     # Apply leverage scaling as per spec: distance = base_pct / leverage
     sl_distance = base_sl_pct / leverage
     tp_distance = base_tp_pct / leverage
+    logger.info(f"enrich_trade_params: leverage={leverage} session={session} sl_distance={sl_distance:.6f} tp_distance={tp_distance:.6f}")
 
     # Compute entry, SL, TP
     entry = current_price
@@ -509,6 +510,7 @@ def enrich_trade_params(pair_result, chat_id):
         "leverage": leverage,
         "session": session,
     })
+    logger.info(f"enrich_trade_params result: entry={pair_result['entry']} sl={pair_result['sl']} tp={pair_result['tp']}")
     return pair_result
 
 # ── Multi-Exchange Ticker Fetchers ──
