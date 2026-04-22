@@ -1573,9 +1573,20 @@ def get_market_news():
     return f"{header}\n\n" + "\n".join(lines)
 
 # ── ClawStrike System ──
+def get_user_data_dir() -> Path:
+    """Return the user_data directory, works both in container and on host."""
+    env_dir = os.getenv("USER_DATA_DIR")
+    if env_dir:
+        return Path(env_dir)
+    container_path = Path("/app/user_data")
+    if container_path.exists():
+        return container_path
+    # Host path (relative to this file)
+    return Path(__file__).resolve().parent.parent / "user_data"
+
 def load_clawstrike_log():
     """Load ClawStrike trade log from user_data."""
-    path = Path("/app/user_data/clawstrike_log.json")
+    path = get_user_data_dir() / "clawstrike_log.json"
     if path.exists():
         try:
             return json.loads(path.read_text())
@@ -1585,7 +1596,7 @@ def load_clawstrike_log():
 
 def save_clawstrike_log(trade_data: dict):
     """Save ClawStrike trade log to user_data."""
-    path = Path("/app/user_data/clawstrike_log.json")
+    path = get_user_data_dir() / "clawstrike_log.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(trade_data, indent=2))
 
