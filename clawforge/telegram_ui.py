@@ -1652,6 +1652,70 @@ def check_clawstrike_conditions(pair: str, chat_id: int) -> tuple[bool, str, dic
         logger.error(f"ClawStrike check error: {e}", exc_info=True)
         return False, f"Error: {e}", {}
 
+# ── ClawStrike Auto-Executor ──
+async def execute_clawstrike(pair: str, p: dict, bot):
+    """
+    Auto-execute ClawStrike trade.
+    No approval needed — all conditions already met.
+    """
+    try:
+        chat_id = int(os.getenv("TELEGRAM_CHAT_ID"))
+
+        # Calculate leverage (max for ClawStrike)
+        confidence = p.get("confidence", 88)
+        trend_strength = p.get("trend_strength", 0.8)
+        leverage = calculate_leverage(confidence, trend_strength)
+        leverage = min(leverage * 1.5, 100)  # boost 1.5x for ClawStrike
+
+        # Execute trade via Freqtrade forcebuy
+        exchange_pair = pair
+        if not exchange_pair.endswith(":USDT"):
+            exchange_pair = pair.replace("/USDT", "") + "/USDT:USDT"
+
+        payload = {
+            "pair": exchange_pair,
+            "side": p["direction"].lower(),
+            "leverage": int(leverage)
+        }
+
+        success, result = api_post("/api/v1/forcebuy", payload)
+
+        if success:
+            trade_id = result.get("trade_id", "?")
+
+            # Save to log
+            save_clawstrike_log({
+                "last_date": str(datetime.now(timezone.utc).date()),
+                "pair": pair,
+                "direction": p["direction"],
+                "trade_id": trade_id,
+                "leverage": leverage,
+                "confidence": confidence,
+                "ai_score": p.get("ai_score")
+            })
+
+            # Notify Telegram channel
+            try:
+                direction_emoji = "🔼" if p["direction"].upper() == "LONG" else "🔻"
+                alert = (
+                    f"🚨 *CLAWSTRIKE FIRED*\n\n"
+                    f"{direction_emoji} *{pair}* {p['direction'].upper()}\n"
+                    f"💰 Leverage: {leverage:.0f}×\n"
+                    f"🎯 AI Score: {p.get('ai_score', '?')}/10\n"
+                    f"🦊 Confidence: {confidence:.0f}%\n"
+                    f"📊 RRR: {p.get('rrr', 0):.2f}\n"
+                    f"🆔 Trade ID: {trade_id}\n"
+                    f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+                )
+                bot.send_message(chat_id=chat_id, text=alert, parse_mode="Markdown")
+            except Exception as te:
+                logger.error(f"ClawStrike Telegram alert failed: {te}")
+        else:
+            logger.error(f"ClawStrike forcebuy failed: {result}")
+
+    except Exception as e:
+        logger.error(f"ClawStrike execution error: {e}", exc_info=True)
+
 def generate_ta():
     lines = []
     for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]:
