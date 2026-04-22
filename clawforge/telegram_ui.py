@@ -345,6 +345,26 @@ def bybit_signed_request(method: str, endpoint: str, params: dict = None, body: 
         logger.error(f"Bybit API error: {e}")
         return None
 
+
+def get_bybit_ticker_price(symbol: str) -> float | None:
+    """Fetch latest price from Bybit ticker. symbol format: BTC/USDT."""
+    try:
+        bybit_symbol = symbol.replace("/", "").upper()
+        data = bybit_signed_request(
+            "GET", "/v5/market/tickers",
+            params={"category": "linear", "symbol": bybit_symbol},
+            timeout=5
+        )
+        if data and data.get("retCode") == 0:
+            item = data.get("result", {}).get("list", [{}])[0]
+            price = float(item.get("lastPrice", 0))
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.debug(f"Bybit ticker price error for {symbol}: {e}")
+    return None
+
+
 def get_bybit_hot_pairs(limit: int = 5) -> list:
     """Fetch top volatile USDT perpetual pairs from Bybit ticker."""
     try:
@@ -352,10 +372,19 @@ def get_bybit_hot_pairs(limit: int = 5) -> list:
         if data and data.get("retCode") == 0:
             items = data.get("result", {}).get("list", [])
             pairs = []
+            EXCLUDED = {
+                "USDC", "BUSD", "DAI", "TUSD", "FDUSD",  # stables
+                "XAUT", "PAXG",  # gold tokens
+                "CL", "GC", "SI", "NG", "HG",  # commodity symbols
+                "GOLD", "SILVER", "OIL", "COPPER",  # commodity names
+            }
             for item in items:
                 symbol = item.get("symbol", "")
                 if symbol.endswith("USDT"):
                     base = symbol[:-4]
+                    if base in EXCLUDED:
+                        logger.info(f"Filtered out {base} — commodity/stable")
+                        continue
                     pairs.append(f"{base}/USDT")
                 if len(pairs) >= limit:
                     break
@@ -680,28 +709,7 @@ def call_stepfun_skill(prompt, retries=2):
             time.sleep(2 ** attempt)  # exponential backoff: 1s, 2s
     return None
 
-def get_bybit_hot_pairs(limit: int = 5) -> list:
-    """Fetch top volatile USDT perpetual pairs from Bybit ticker."""
-    try:
-        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear"}, timeout=5)
-        if data and data.get("retCode") == 0:
-            items = data.get("result", {}).get("list", [])
-            pairs = []
-            for item in items:
-                symbol = item.get("symbol", "")
-                if symbol.endswith("USDT"):
-                    base = symbol[:-4]
-                    pairs.append(f"{base}/USDT")
-                if len(pairs) >= limit:
-                    break
-            logger.info(f"Bybit hot USDT pairs: {pairs}")
-            if pairs:
-                return pairs
-    except Exception as e:
-        logger.debug(f"Bybit hot pairs error: {e}")
-    fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"][:limit]
-    logger.warning("Bybit hot pairs fetch failed, using fallback USDT list")
-    return fallback
+
 
 def get_bybit_top_movers(limit: int = 20) -> list:
     """
