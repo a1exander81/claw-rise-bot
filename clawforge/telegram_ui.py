@@ -471,25 +471,25 @@ def enrich_trade_params(pair_result, chat_id):
     # Session windows (SGT): pre_london 06:00-07:00, london 16:00-20:00, ny 21:00-23:00
     if 6 <= hour_sgt < 7:
         session = "pre_london"
-        base_sl_pct = 0.015   # 1.5%
-        base_tp_pct = 0.045   # 4.5% → 3:1 RRR
+        base_sl_pct = 0.005   # 0.5% price move
+        base_tp_pct = 0.015   # 1.5% price move → 3:1 RRR
     elif 16 <= hour_sgt < 20:
         session = "london"
-        base_sl_pct = 0.015
-        base_tp_pct = 0.045
+        base_sl_pct = 0.005
+        base_tp_pct = 0.015
     elif 21 <= hour_sgt < 23:
         session = "ny"
-        base_sl_pct = 0.020   # 2.0%
-        base_tp_pct = 0.060   # 6.0% → 3:1 RRR
+        base_sl_pct = 0.007   # 0.7% price move
+        base_tp_pct = 0.021   # 2.1% price move → 3:1 RRR
     else:
         session = "manual"
-        base_sl_pct = 0.010   # 1.0%
-        base_tp_pct = 0.020   # 2.0% → 2:1 RRR
+        base_sl_pct = 0.004   # 0.4% price move
+        base_tp_pct = 0.008   # 0.8% price move → 2:1 RRR
 
-    # Apply leverage scaling as per spec: distance = base_pct / leverage
-    sl_distance = base_sl_pct / leverage
-    tp_distance = base_tp_pct / leverage
-    logger.info(f"enrich_trade_params: leverage={leverage} session={session} sl_distance={sl_distance:.6f} tp_distance={tp_distance:.6f}")
+    # SL/TP are fixed price-move percentages (already scaled for leverage exposure)
+    sl_distance = base_sl_pct
+    tp_distance = base_tp_pct
+    logger.info(f"enrich_trade_params: session={session} base_sl={base_sl_pct:.4f} base_tp={base_tp_pct:.4f}")
 
     # Compute entry, SL, TP
     entry = current_price
@@ -637,48 +637,6 @@ def get_open_trades_count() -> int:
     except Exception:
         return 0
 
-def enrich_trade_params(pair_result, chat_id):
-    """Add concrete trade parameters (entry, sl, tp, rrr, sizing) based on user state and balance."""
-    state = get_state(chat_id)
-    real, mock = get_balance()
-    mode = state.get("trade_mode", "MOCK")
-    wallet = mock if mode == "MOCK" else (real or 0)
-    leverage = state.get("leverage", 50)
-    margin_pct = state.get("margin", 1.0)
-    direction = pair_result.get("direction", "LONG")
-    current_price = pair_result.get("current_price", 0)
-    if current_price <= 0:
-        return pair_result
-    # Strategy defaults: initial SL 5%, first TP 10% (RRR = 2.0)
-    risk_pct = 0.05
-    target_pct = 0.10
-    if direction == "LONG":
-        sl = current_price * (1 - risk_pct)
-        tp = current_price * (1 + target_pct)
-    else:  # SHORT
-        sl = current_price * (1 + risk_pct)
-        tp = current_price * (1 - target_pct)
-    rrr = target_pct / risk_pct
-    # Position sizing
-    stake_amount = wallet * (margin_pct / 100)  # margin in USDT
-    position_value = stake_amount * leverage
-    quantity = position_value / current_price
-    pair_result.update({
-        "entry": round(current_price, 4),
-        "sl": round(sl, 4),
-        "tp": round(tp, 4),
-        "rrr": round(rrr, 2),
-        "stake_amount": round(stake_amount, 2),
-        "position_value": round(position_value, 2),
-        "quantity": round(quantity, 6),
-        "margin_pct": margin_pct,
-        "leverage": leverage,
-    })
-    return pair_result
-
-# ── Stats: wins & Gains ──
-def get_stats():
-    s = api_get("/api/v1/stats") or {}
     wins = s.get("wins", 0)
     losses = s.get("losses", 0)
     total = wins + losses
