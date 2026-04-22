@@ -12,6 +12,11 @@ import requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+# ── Ensure project root on PYTHONPATH for imports ──
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 # ── Config ──
 SESSIONS = {
     "pre_london": {
@@ -297,6 +302,24 @@ def run_prescan(session_key: str):
     with open(out_path, 'w') as f:
         json.dump(out, f, indent=2)
     logger.info(f"Prescan results saved to {out_path}")
+
+    # ── ClawStrike Auto-Check (London/NY only) ──
+    if session_key in ("london", "ny") and results:
+        # Pick top pair by RRR (highest)
+        top = max(results, key=lambda x: x.get("rrr", 0))
+        pair = top["symbol"]
+        logger.info(f"ClawStrike check: {pair} (RRR={top['rrr']:.2f})")
+        try:
+            from clawforge.telegram_ui import check_clawstrike_conditions, execute_clawstrike
+            chat_id = int(TELEGRAM_CHAT_ID) if TELEGRAM_CHAT_ID else None
+            eligible, reason, score = check_clawstrike_conditions(pair, chat_id)
+            if eligible:
+                logger.info(f"ClawStrike eligible: {reason} — executing")
+                execute_clawstrike(pair, score)
+            else:
+                logger.info(f"ClawStrike not eligible: {reason}")
+        except Exception as e:
+            logger.error(f"ClawStrike check/exec failed: {e}", exc_info=True)
 
     return 0
 

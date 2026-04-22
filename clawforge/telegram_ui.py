@@ -1653,7 +1653,7 @@ def check_clawstrike_conditions(pair: str, chat_id: int) -> tuple[bool, str, dic
         return False, f"Error: {e}", {}
 
 # ── ClawStrike Auto-Executor ──
-async def execute_clawstrike(pair: str, p: dict, bot):
+def execute_clawstrike(pair: str, p: dict):
     """
     Auto-execute ClawStrike trade.
     No approval needed — all conditions already met.
@@ -1707,7 +1707,7 @@ async def execute_clawstrike(pair: str, p: dict, bot):
                     f"🆔 Trade ID: {trade_id}\n"
                     f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
                 )
-                bot.send_message(chat_id=chat_id, text=alert, parse_mode="Markdown")
+                send_telegram(alert)
             except Exception as te:
                 logger.error(f"ClawStrike Telegram alert failed: {te}")
         else:
