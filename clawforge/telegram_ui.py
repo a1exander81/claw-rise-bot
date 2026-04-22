@@ -2131,16 +2131,22 @@ async def manual_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_state[chat_id]['pair_detail_back'] = 'manual_mode'
     state = get_state(chat_id)
     state["mode"] = "manual"
-    pairs = get_bybit_hot_pairs(limit=6)
+
+    # Tier 1: 4 fixed majors
+    tier1_pairs = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
     kb = []
-    for i in range(0, len(pairs), 2):
+    for i in range(0, len(tier1_pairs), 2):
         row = []
-        for p in pairs[i:i+2]:
+        for p in tier1_pairs[i:i+2]:
             row.append(InlineKeyboardButton(p, callback_data=f"select_{p}"))
         kb.append(row)
-    kb.append([InlineKeyboardButton("➕ ADD PAIR", callback_data="add_pair_menu")])
+    # More Opportunities button
+    kb.append([InlineKeyboardButton("📊 More Opportunities", callback_data="more_opportunities")])
     kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")])
-    await q.edit_message_text("👷 **MANUAL MODE**\n\nSelect pair to trade:", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(
+        "👷 **MANUAL MODE**\n\nTier 1 — Major Pairs:\nSelect a liquid pair to trade:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 async def add_pair_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -2169,6 +2175,121 @@ async def other_pair_input_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     await q.edit_message_text("⌨️ **ENTER CUSTOM PAIR**\n\nType ticker (e.g., BTC/USDT) in chat.\nI'll verify on Bybit.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="add_pair_menu")]]))
     user_state[q.message.chat_id]["awaiting_pair_input"] = True
+
+# ── Manual Mode — Tier 2: More Opportunities ──
+async def more_opportunities_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+
+    # Show loading message
+    await q.edit_message_text("📊 **Scanning opportunities...**", parse_mode="Markdown")
+
+    try:
+        # Fetch Bybit tickers
+        data = bybit_signed_request("GET", "/v5/market/tickers", params={"category": "linear"}, timeout=5)
+        if not data or data.get("retCode") != 0:
+            await q.edit_message_text("❌ Failed to fetch Bybit tickers", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="manual_mode")]]))
+            return
+
+        items = data.get("result", {}).get("list", [])
+        tier1_bases = {"BTC", "ETH", "SOL", "BNB"}
+        EXCLUDED = {
+            "USDC", "BUSD", "DAI", "TUSD", "FDUSD",
+            "XAUT", "PAXG",
+            "CL", "GC", "SI", "NG", "HG",
+            "GOLD", "SILVER", "OIL", "COPPER",
+        }
+        candidates = []
+        for item in items:
+            symbol = item.get("symbol", "")
+            if not symbol.endswith("USDT"):
+                continue
+            base = symbol[:-4]
+            if base in tier1_bases or base in EXCLUDED:
+                continue
+            try:
+                price = float(item.get("lastPrice", 0))
+                turnover = float(item.get("turnover24h", 0))
+                if price <= 0.10 or turnover < 50_000_000:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            candidates.append({
+                "symbol": f"{base}/USDT",
+                "bybit_symbol": symbol,
+                "price": price,
+                "turnover": turnover
+            })
+
+        if not candidates:
+            await q.edit_message_text("❌ No additional opportunities found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="manual_mode")]]))
+            return
+
+        # Fetch 1H move for each candidate (last 2 candles)
+        for c in candidates:
+            try:
+                klines = bybit_signed_request(
+                    "GET", "/v5/market/kline",
+                    params={
+                        "category": "linear",
+                        "symbol": c["bybit_symbol"],
+                        "interval": "60",
+                        "limit": 2
+                    },
+                    timeout=5
+                )
+                if klines and klines.get("retCode") == 0:
+                    k = klines.get("result", {}).get("list", [])
+                    if len(k) >= 2:
+                        close_prev = float(k[1][4])
+                        close_curr = float(k[0][4])
+                        if close_prev > 0:
+                            move_pct = (close_curr - close_prev) / close_prev * 100
+                            c["move_pct"] = move_pct
+                        else:
+                            c["move_pct"] = 0.0
+                    else:
+                        c["move_pct"] = 0.0
+                else:
+                    c["move_pct"] = 0.0
+            except Exception:
+                c["move_pct"] = 0.0
+
+        # Score: volume × abs(move) × simple RRR proxy (use 0.5 fixed for now)
+        for c in candidates:
+            c["score"] = c["turnover"] * abs(c.get("move_pct", 0)) * 0.5
+
+        # Sort and take top 4
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        top4 = candidates[:4]
+
+        # Build keyboard 2x2
+        kb = []
+        for i in range(0, len(top4), 2):
+            row = []
+            for c in top4[i:i+2]:
+                move_str = f"{c.get('move_pct', 0):+.1f}%"
+                label = f"{c['symbol'].replace('/USDT','')} {move_str}"
+                row.append(InlineKeyboardButton(label, callback_data=f"select_{c['symbol']}"))
+            kb.append(row)
+        kb.append([InlineKeyboardButton("⬅️ BACK", callback_data="manual_mode")])
+
+        # Build message
+        lines = ["📊 **More Opportunities**\n\nTop movers by volume × 1H change:"]
+        for c in top4:
+            move = c.get("move_pct", 0)
+            lines.append(f"• {c['symbol']}: {move:+.1f}% (1H)")
+        text = "\n".join(lines)
+
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"More opportunities error: {e}", exc_info=True)
+        await q.edit_message_text(f"❌ Error: {e}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="manual_mode")]]))
+
 
 def extract_pair_from_link(url: str):
     """Extract trading pair symbol from exchange or TradingView links.
@@ -3590,6 +3711,7 @@ def main():
     app.add_handler(CallbackQueryHandler(manual_mode_cb, pattern="^manual_mode$"))
     app.add_handler(CallbackQueryHandler(add_pair_menu_cb, pattern="^add_pair_menu$"))
     app.add_handler(CallbackQueryHandler(other_pair_input_cb, pattern="^other_pair_input$"))
+    app.add_handler(CallbackQueryHandler(more_opportunities_cb, pattern="^more_opportunities$"))
     app.add_handler(CallbackQueryHandler(positions_cb, pattern="^positions$"))
     app.add_handler(CallbackQueryHandler(pos_detail_cb, pattern="^pos_"))
     app.add_handler(CallbackQueryHandler(refresh_positions_cb, pattern="^refresh_positions$"))

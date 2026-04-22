@@ -133,7 +133,7 @@ def export():
 
     print(f"Found {len(trades)} closed trades")
 
-    base = Path("/data/.openclaw/workspace/clawmimoto-backtests/backtests")
+    base = Path("/docker/openclaw-0jn0/data/.openclaw/workspace/clawmimoto-backtests/backtests")
     out_dir = base / period / "live"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -151,7 +151,7 @@ def export():
     print(f"Stats: {meta['total_trades']} trades | WR: {meta['win_rate']}% | PnL: {meta['total_pnl_pct']}%")
 
     # Git commit and push
-    repo = Path("/data/.openclaw/workspace/clawmimoto-backtests")
+    repo = Path("/docker/openclaw-0jn0/data/.openclaw/workspace/clawmimoto-backtests")
     subprocess.run(["git", "add", "backtests/"], cwd=repo)
     result = subprocess.run([
         "git", "commit", "-m",

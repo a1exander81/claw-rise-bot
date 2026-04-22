@@ -140,5 +140,89 @@
     "chat_id": "@RightclawTrade",
     "type": "headline_preview",
     "delete_at": "2026-04-22T04:30:07.926332Z"
+  },
+  {
+    "message_id": 1497,
+    "timestamp": "2026-04-22T08:00:06.047793Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T08:30:06.046623Z"
+  },
+  {
+    "message_id": 84,
+    "timestamp": "2026-04-22T08:00:06.630001Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T08:30:06.629975Z"
+  },
+  {
+    "message_id": 1498,
+    "timestamp": "2026-04-22T08:00:07.290917Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T08:30:07.290854Z"
+  },
+  {
+    "message_id": 85,
+    "timestamp": "2026-04-22T08:00:07.889038Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T08:30:07.889011Z"
+  },
+  {
+    "message_id": 1499,
+    "timestamp": "2026-04-22T12:00:06.207356Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T12:30:06.207329Z"
+  },
+  {
+    "message_id": 87,
+    "timestamp": "2026-04-22T12:00:06.802356Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T12:30:06.802336Z"
+  },
+  {
+    "message_id": 1500,
+    "timestamp": "2026-04-22T12:00:07.362658Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T12:30:07.362638Z"
+  },
+  {
+    "message_id": 88,
+    "timestamp": "2026-04-22T12:00:07.932452Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T12:30:07.932428Z"
+  },
+  {
+    "message_id": 1507,
+    "timestamp": "2026-04-22T16:00:05.870386Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T16:30:05.870352Z"
+  },
+  {
+    "message_id": 90,
+    "timestamp": "2026-04-22T16:00:06.513681Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-22T16:30:06.513656Z"
+  },
+  {
+    "message_id": 1508,
+    "timestamp": "2026-04-22T16:00:07.125675Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T16:30:07.125655Z"
+  },
+  {
+    "message_id": 91,
+    "timestamp": "2026-04-22T16:00:07.772343Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-22T16:30:07.772318Z"
   }
 ]
