@@ -1362,36 +1362,51 @@ async def show_balance_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     chat_id = q.message.chat_id
     state = get_state(chat_id)
-    real, mock = get_balance()
-    real_str = f"${real:,.2f} USDT" if real is not None else "N/A"
-    mock_str = f"{mock:,.0f} CLUSDT"
     mode = state.get("trade_mode", "MOCK")
-    # P&L today (realized + unrealized)
-    pnl_pct = 0.0
-    try:
-        trades = api_get("/api/v1/status") or []
-        today = datetime.now(timezone.utc).date()
-        closed_today = []
-        for t in trades:
-            close_date = None
-            if t.get('close_date'):
-                try:
-                    close_date = datetime.fromisoformat(t['close_date'].replace('Z','+00:00')).date()
-                except: pass
-            if close_date == today:
-                closed_today.append(t)
-        pnl_pct = sum(t.get('profit_pct',0) for t in closed_today)
-    except Exception:
-        pass
-    open_count = get_open_trades_count()
+    currency = "CLUSDT" if mode == "MOCK" else "USDT"
+
+    # Fetch balance data from Freqtrade API
+    balance_data = api_get("/api/v1/balance") or {}
+    # Parse free and total from balance_data (handle both top-level and currencies list)
+    free = 0.0
+    total = 0.0
+    # Try top-level keys first
+    if "free" in balance_data:
+        free = float(balance_data.get("free", 0) or 0)
+    if "total" in balance_data:
+        total = float(balance_data.get("total", 0) or 0)
+    # If currencies list present, sum available/est_stake
+    currencies = balance_data.get("currencies", [])
+    if currencies:
+        for curr in currencies:
+            # Use 'available' if present, else 'balance'
+            curr_free = float(curr.get("available", curr.get("balance", 0) or 0))
+            # Use 'est_stake' if present, else 'balance'
+            curr_total = float(curr.get("est_stake", curr.get("balance", 0) or 0))
+            free += curr_free
+            total += curr_total
+    starting = float(balance_data.get("starting_capital", 0) or 0)
+
+    # Fetch unrealized PnL from open trades
+    trades = api_get("/api/v1/status") or []
+    unrealized = sum(float(t.get("profit_abs", 0) or 0) for t in trades if t.get('is_open', False))
+    unrealized_pct = (unrealized / starting * 100) if starting else 0.0
+    total_with_pnl = free + unrealized
+    overall_pnl_pct = ((total_with_pnl - starting) / starting * 100) if starting else 0.0
+    open_count = len([t for t in trades if t.get('is_open', False)])
+
+    # Determine sign emoji
+    unrealized_sign = "➕" if unrealized >= 0 else "➖"
+
     text = (
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 BALANCE\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Real: {real_str}\n"
-        f"Mock: {mock_str}\n"
-        f"Mode: {mode}\n"
-        f"P&L Today: {pnl_pct:+.1f}%\n"
+        f"Available: ${free:.2f} {currency}\n"
+        f"Unrealized: {unrealized_sign}${abs(unrealized):.2f} ({unrealized_pct:+.2f}%)\n"
+        f"Total w/ PnL: ${total_with_pnl:.2f} {currency}\n"
+        f"Started: ${starting:.2f} {currency}\n"
+        f"Overall P&L: {overall_pnl_pct:+.2f}%\n"
         f"Open Trades: {open_count}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━"
     )
