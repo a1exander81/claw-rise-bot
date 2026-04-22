@@ -724,13 +724,20 @@ def get_bybit_top_movers(limit: int = 20) -> list:
         baseline = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
         baseline_bases = {"BTC", "ETH", "SOL"}
         candidates = []
-        stable_bases = {"USDC", "BUSD", "DAI", "TUSD", "FDUSD"}  # exclude stablecoins
+        # Exclusion list: stables, gold tokens, commodities
+        EXCLUDED = {
+            "USDC", "BUSD", "DAI", "TUSD", "FDUSD",  # stables
+            "XAUT", "PAXG",  # gold tokens
+            "CL", "GC", "SI", "NG", "HG",  # commodity symbols
+            "GOLD", "SILVER", "OIL", "COPPER",  # commodity names
+        }
         for item in items:
             symbol = item.get("symbol", "")
             if not symbol.endswith("USDT"):
                 continue
             base = symbol[:-4]
-            if base in stable_bases:
+            if base in EXCLUDED:
+                logger.info(f"Filtered out {base} — commodity/stable")
                 continue
             # Skip baseline pairs — they're already included
             if base in baseline_bases:
