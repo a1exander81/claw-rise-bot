@@ -119,3 +119,47 @@ def calculate_metadata(trades, period):
         "best_trade": max(trades, key=lambda x: x["profit_pct"])["profit_pct"] if trades else 0,
         "worst_trade": min(trades, key=lambda x: x["profit_pct"])["profit_pct"] if trades else 0,
     }
+
+def export():
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    print(f"Starting export for {period}...")
+
+    trades_raw = fetch_trades()
+    trades = [convert_trade(t) for t in trades_raw if t.get("close_date")]
+
+    if not trades:
+        print("No closed trades to export")
+        return
+
+    print(f"Found {len(trades)} closed trades")
+
+    base = Path("/data/.openclaw/workspace/clawmimoto-backtests/backtests")
+    out_dir = base / period / "live"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write trades.jsonl
+    with open(out_dir / "trades.jsonl", "w") as f:
+        for t in trades:
+            f.write(json.dumps(t) + "\n")
+    print(f"Wrote trades.jsonl")
+
+    # Write metadata.json
+    meta = calculate_metadata(trades, period)
+    with open(out_dir / "metadata.json", "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"Wrote metadata.json")
+    print(f"Stats: {meta['total_trades']} trades | WR: {meta['win_rate']}% | PnL: {meta['total_pnl_pct']}%")
+
+    # Git commit and push
+    repo = Path("/data/.openclaw/workspace/clawmimoto-backtests")
+    subprocess.run(["git", "add", "backtests/"], cwd=repo)
+    result = subprocess.run([
+        "git", "commit", "-m",
+        f"data: trade export {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    ], cwd=repo, capture_output=True, text=True)
+    print(result.stdout)
+    subprocess.run(["git", "push"], cwd=repo)
+    print("Pushed to GitHub")
+
+if __name__ == "__main__":
+    export()
