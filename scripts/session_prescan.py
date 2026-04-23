@@ -61,6 +61,15 @@ TELEGRAM_BOT_TOKEN = os.getenv(
 )
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# ── Optional ClawStrike import (only available inside container) ──
+try:
+    from clawforge.telegram_ui import check_clawstrike_conditions, execute_clawstrike
+    HAS_CLAWSTRIKE = True
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"ClawStrike import skipped: {e}")
+    HAS_CLAWSTRIKE = False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -308,13 +317,12 @@ def run_prescan(session_key: str):
     logger.info(f"Prescan results saved to {out_path}")
 
     # ── ClawStrike Auto-Check (London/NY only) ──
-    if session_key in ("london", "ny") and results:
+    if HAS_CLAWSTRIKE and session_key in ("london", "ny") and results:
         # Pick top pair by RRR (highest)
         top = max(results, key=lambda x: x.get("rrr", 0))
         pair = top["symbol"]
         logger.info(f"ClawStrike check: {pair} (RRR={top['rrr']:.2f})")
         try:
-            from clawforge.telegram_ui import check_clawstrike_conditions, execute_clawstrike
             chat_id = int(TELEGRAM_CHAT_ID) if TELEGRAM_CHAT_ID else None
             eligible, reason, score = check_clawstrike_conditions(pair, chat_id)
             if eligible:
@@ -324,6 +332,9 @@ def run_prescan(session_key: str):
                 logger.info(f"ClawStrike not eligible: {reason}")
         except Exception as e:
             logger.error(f"ClawStrike check/exec failed: {e}", exc_info=True)
+    else:
+        if not HAS_CLAWSTRIKE:
+            logger.info("ClawStrike check skipped on host - runs inside container only")
 
     return 0
 

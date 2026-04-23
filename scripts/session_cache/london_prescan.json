@@ -1,0 +1,54 @@
+{
+  "session": "london",
+  "timestamp": "2026-04-23T04:47:45.184278+00:00",
+  "results": [
+    {
+      "symbol": "BTC/USDT",
+      "direction": "SHORT",
+      "entry": 75396.0,
+      "sl": 75697.584,
+      "tp": 74491.248,
+      "rrr": 3.0,
+      "atr_pct": 1.43,
+      "current_price": 74299.9,
+      "margin_pct": 1.5,
+      "session": "LONDON"
+    },
+    {
+      "symbol": "ETH/USDT",
+      "direction": "SHORT",
+      "entry": 2385.71,
+      "sl": 2395.2528,
+      "tp": 2357.0815,
+      "rrr": 3.0,
+      "atr_pct": 1.69,
+      "current_price": 2327.49,
+      "margin_pct": 1.5,
+      "session": "LONDON"
+    },
+    {
+      "symbol": "SOL/USDT",
+      "direction": "SHORT",
+      "entry": 87.13,
+      "sl": 87.4785,
+      "tp": 86.0844,
+      "rrr": 3.0,
+      "atr_pct": 2.54,
+      "current_price": 83.4,
+      "margin_pct": 1.5,
+      "session": "LONDON"
+    },
+    {
+      "symbol": "BNB/USDT",
+      "direction": "SHORT",
+      "entry": 627.3,
+      "sl": 629.8092,
+      "tp": 619.7724,
+      "rrr": 3.0,
+      "atr_pct": 1.49,
+      "current_price": 615.8,
+      "margin_pct": 1.5,
+      "session": "LONDON"
+    }
+  ]
+}
