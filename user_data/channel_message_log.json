@@ -280,5 +280,33 @@
     "chat_id": "@RightclawTrade",
     "type": "headline_preview",
     "delete_at": "2026-04-23T00:30:08.339882Z"
+  },
+  {
+    "message_id": 1527,
+    "timestamp": "2026-04-23T04:00:06.130116Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-23T04:30:06.130028Z"
+  },
+  {
+    "message_id": 98,
+    "timestamp": "2026-04-23T04:00:06.765861Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-23T04:30:06.765837Z"
+  },
+  {
+    "message_id": 1528,
+    "timestamp": "2026-04-23T04:00:07.317226Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-23T04:30:07.317206Z"
+  },
+  {
+    "message_id": 99,
+    "timestamp": "2026-04-23T04:00:07.943378Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-23T04:30:07.943358Z"
   }
 ]
