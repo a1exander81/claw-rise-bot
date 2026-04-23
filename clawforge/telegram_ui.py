@@ -675,12 +675,12 @@ def get_open_trades_count() -> int:
 
 
 def get_stats():
-    s = api_get("/api/v1/stats") or {}
-    wins = s.get("wins", 0)
-    losses = s.get("losses", 0)
+    s = api_get("/api/v1/profit") or {}
+    wins = s.get("winning_trades", 0)
+    losses = s.get("losing_trades", 0)
     total = wins + losses
     win_rate = (wins / total * 100) if total > 0 else 0
-    realized_pnl = s.get("total_profit_abs", 0)
+    realized_pnl = s.get("profit_all_coin", 0)
     return wins, losses, win_rate, realized_pnl
 
 def format_wins():
@@ -688,63 +688,48 @@ def format_wins():
     return f"{w}/{l} ({wr:.0f}%)"
 
 def format_gains():
-    _, _, _, pnl = get_stats()
-    pnl_pct = (pnl / 10000 * 100) if pnl else 0  # based on $10k initial
-    return f"{pnl_pct:+.1f}% ${pnl:,.2f}"
+    s = api_get("/api/v1/profit") or {}
+    pnl_pct = s.get("profit_all_percent", 0) or 0
+    pnl_abs = s.get("profit_all_coin", 0) or 0
+    return f"{pnl_pct:+.2f}% (${pnl_abs:,.2f})"
 
 # ── AI Scan ──
 def call_stepfun_skill(prompt, retries=2):
-    """AI scoring via Groq (llama-3.3-70b) — drop-in replacement for StepFun."""
+    """AI scoring — Groq primary, static fallback."""
     import os
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key:
-        logger.error("GROQ_API_KEY not set")
-        return None
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 500,
-    }
-    for attempt in range(retries):
-        try:
-            r = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                json=payload, headers=headers, timeout=30
-            )
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"].strip()
-            else:
-                logger.warning(f"Groq API error {r.status_code}: {r.text[:200]}")
-        except Exception as e:
-            logger.warning(f"Groq attempt {attempt+1} failed: {e}")
-    return None
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {"role": "system", "content": "You are an expert crypto scalping analyst. Provide concise TA with confidence %% (80-90) and RRR."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    }
-    for attempt in range(retries + 1):
-        try:
-            logger.debug(f"StepFun call attempt {attempt+1}/{retries+1} for: {prompt[:60]}...")
-            r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=30)
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"]
-            logger.warning(f"StepFun HTTP {r.status_code}: {r.text[:100]}")
-        except Exception as e:
-            logger.error(f"StepFun error (attempt {attempt+1}): {e}")
-        if attempt < retries:
-            time.sleep(2 ** attempt)  # exponential backoff: 1s, 2s
-    return None
-
+    
+    # PRIMARY: Groq
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key:
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 500,
+        }
+        for attempt in range(retries):
+            try:
+                r = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    json=payload, headers=headers, timeout=30
+                )
+                if r.status_code == 200:
+                    return r.json()["choices"][0]["message"]["content"].strip()
+                elif r.status_code == 429:
+                    logger.warning("Groq rate limit — waiting 5s")
+                    import time; time.sleep(5)
+                else:
+                    logger.warning(f"Groq error {r.status_code}: {r.text[:100]}")
+            except Exception as e:
+                logger.warning(f"Groq attempt {attempt+1} failed: {e}")
+    
+    # FALLBACK: Static score
+    logger.warning("All AI APIs failed — using static fallback score")
+    return "AI Score: 5/10\nNote: AI temporarily unavailable. Manual review recommended."
 
 
 def get_bybit_top_movers(limit: int = 20) -> list:
@@ -1328,29 +1313,29 @@ async def session_skip_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── UI Builders ──
 def mode_button(mode):
     label = "🔴 REAL" if mode == "REAL" else "🟢 MOCK"
-    return InlineKeyboardButton(f"Mode: {label}", callback_data="toggle_mode")
+    return InlineKeyboardButton(f"⚙️ {label}", callback_data="toggle_mode")
 
 def balance_button(mode):
     real, mock = get_balance()
     bal = format_balance(real, mock, mode)
-    return InlineKeyboardButton(f"Balance: {bal}", callback_data="show_balance")
+    return InlineKeyboardButton(f"💵 {bal}", callback_data="show_balance")
 
 def wins_button():
-    return InlineKeyboardButton(f"Win/Loss: {format_wins()}", callback_data="show_stats")
+    return InlineKeyboardButton(f"🏆 {format_wins()}", callback_data="show_stats")
 
 def gains_button():
-    return InlineKeyboardButton(f"Gains: {format_gains()}", callback_data="show_gains")
+    return InlineKeyboardButton(f"💰 {format_gains()}", callback_data="show_gains")
 
 def lev_margin_buttons(state):
     lev = state["leverage"]
     mar = state["margin"]
     # Leverage: +10 / -10
     lev_plus = InlineKeyboardButton("➕ Leverage", callback_data="lev_up")
-    lev_label = InlineKeyboardButton(f"{lev}x", callback_data="lev_show")
+    lev_label = InlineKeyboardButton(f"⚡ {lev}x", callback_data="lev_show")
     lev_minus = InlineKeyboardButton("➖ Leverage", callback_data="lev_down")
     # Margin: +1% / -1%
     mar_plus = InlineKeyboardButton("➕ Margin", callback_data="mar_up")
-    mar_label = InlineKeyboardButton(f"{mar}%", callback_data="mar_show")
+    mar_label = InlineKeyboardButton(f"🎯 {mar}%", callback_data="mar_show")
     mar_minus = InlineKeyboardButton("➖ Margin", callback_data="mar_down")
     return [ [lev_plus, lev_label, lev_minus], [mar_plus, mar_label, mar_minus] ]
 
@@ -1373,7 +1358,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     news = get_market_news()
     bal_line = get_balance_display(chat_id)
     kb = [
-        [mode_button(state["trade_mode"])],
         [wins_button(), gains_button()],
         [InlineKeyboardButton("📈 TRADE MENU", callback_data="trade_menu")],
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
@@ -1398,24 +1382,32 @@ async def main_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     open_count = get_open_trades_count()
     mode_header = get_mode_header(chat_id)
     # Build new main menu
+    # Mode labels
+    trade_mode = state.get("trade_mode", "MOCK")
+    trading_mode = state.get("trading_mode", "manual")
+    mock_label = "🟢 MOCK" if trade_mode == "MOCK" else "🔴 REAL"
+    session_label = "🤖 SESSION" if trading_mode == "session" else "🎯 MANUAL"
+    open_label = f"📊 {open_count} Open Trade{'s' if open_count != 1 else ''}"
+
     text = (
         "╔══════════════════════╗\n"
-        "║ 🦅 CLAWMIMOTO ║\n"
-        "║ Trading Terminal ║\n"
+        "║  🦞 CLAWMIMOTO       ║\n"
+        "║  Trading Terminal    ║\n"
         "╚══════════════════════╝\n\n"
-        f"{mode_header}\n"
-        f"💰 Balance: {bal} USDT\n"
-        f"📊 Open: {open_count} trades"
+        f"{mock_label}  |  {session_label}\n\n"
+        f"💰 {bal}   {open_label}"
     )
     kb = [
-        [InlineKeyboardButton("📊 SCAN", callback_data="ai_scan"),
+        # Toggle switches — clickable
+        [InlineKeyboardButton(f"⚙️ {mock_label}", callback_data="toggle_mode"),
+         InlineKeyboardButton(f"🔄 {session_label}", callback_data="toggle_trading_mode")],
+        # Main actions
+        [InlineKeyboardButton("🤖 AI SCAN", callback_data="ai_scan"),
+         InlineKeyboardButton("📈 POSITIONS", callback_data="positions")],
+        [InlineKeyboardButton("📋 HISTORY", callback_data="history"),
          InlineKeyboardButton("💰 BALANCE", callback_data="balance")],
-        [InlineKeyboardButton("📈 POSITIONS", callback_data="positions"),
-         InlineKeyboardButton("📰 NEWS", callback_data="market_now")],
-        [InlineKeyboardButton("🎯 SESSION MODE", callback_data="session_mode"),
-         InlineKeyboardButton("🔫 MANUAL MODE", callback_data="manual_mode")],
-        [InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings"),
-         InlineKeyboardButton("📋 HISTORY", callback_data="history")],
+        [InlineKeyboardButton("📡 SOCIALS", callback_data="socials"),
+         InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings")],
     ]
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -1427,7 +1419,61 @@ async def toggle_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = q.message.chat_id
     state = get_state(chat_id)
     state["trade_mode"] = "REAL" if state["trade_mode"] == "MOCK" else "MOCK"
-    # Return to main
+    await main_cb(update, ctx)
+
+
+async def set_trade_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    state = get_state(chat_id)
+    action = q.data
+    if action == "set_mock":
+        state["trade_mode"] = "MOCK"
+        await q.answer("✅ Switched to MOCK mode", show_alert=True)
+    elif action == "set_real":
+        state["trade_mode"] = "REAL"
+        await q.answer("🔴 Switched to REAL mode", show_alert=True)
+    elif action == "set_manual":
+        state["trading_mode"] = "manual"
+        await q.answer("🎯 Manual mode active", show_alert=True)
+    elif action == "set_session":
+        state["trading_mode"] = "session"
+        await q.answer("🤖 Session mode active", show_alert=True)
+    await settings_cb(update, ctx)
+
+async def socials_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    text = (
+        "📡 *FIND US*\n\n"
+        "🐦 *X / Twitter*\n"
+        "Coming soon — @ClawTrader\n\n"
+        "📬 *Telegram Channel*\n"
+        "@RightclawTrade — live signals\n\n"
+        "🎵 *TikTok*\n"
+        "Coming soon\n\n"
+        "📊 *Dashboard*\n"
+        "clawmimoto\-backtests\.vercel\.app\n\n"
+        "🌐 *Website*\n"
+        "clawtrader\-landing\.vercel\.app"
+    )
+    kb = [[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="MarkdownV2")
+
+async def toggle_trading_mode_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    state = get_state(chat_id)
+    current = state.get("trading_mode", "manual")
+    state["trading_mode"] = "session" if current == "manual" else "manual"
+    new_mode = state["trading_mode"]
+    await q.answer(f"Switched to {new_mode.upper()} mode", show_alert=True)
     await main_cb(update, ctx)
 
 async def show_balance_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1525,12 +1571,45 @@ async def settings_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = update.callback_query
     await q.answer()
+    chat_id = q.message.chat_id
+    state = get_state(chat_id)
+    trade_mode = state.get("trade_mode", "MOCK")
+    trading_mode = state.get("trading_mode", "manual")
+    leverage = state.get("leverage", 20)
+    margin = state.get("margin", 5)
+    mock_icon = "✅" if trade_mode == "MOCK" else "⬜"
+    real_icon = "✅" if trade_mode == "REAL" else "⬜"
+    manual_icon = "✅" if trading_mode == "manual" else "⬜"
+    session_icon = "✅" if trading_mode == "session" else "⬜"
+
     text = (
-        "⚙️ **SETTINGS**\n\n"
-        "🔧 Leverage & margin controls coming soon.\n"
-        "📡 API keys, session schedules, and risk limits will appear here."
+        "⚙️ *SETTINGS*\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "*Trade Mode*\n"
+        f"  {mock_icon} MOCK (dry run)\n"
+        f"  {real_icon} REAL (live)\n\n"
+        "*Trading Mode*\n"
+        f"  {manual_icon} MANUAL (you pick)\n"
+        f"  {session_icon} SESSION (auto)\n\n"
+        "*Risk*\n"
+        f"  ⚡ Leverage: {leverage}x\n"
+        f"  🎯 Margin: {margin}%\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
-    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]]), parse_mode="Markdown")
+    kb = [
+        [InlineKeyboardButton(f"{mock_icon} MOCK", callback_data="set_mock"),
+         InlineKeyboardButton(f"{real_icon} REAL", callback_data="set_real")],
+        [InlineKeyboardButton(f"{manual_icon} MANUAL", callback_data="set_manual"),
+         InlineKeyboardButton(f"{session_icon} SESSION", callback_data="set_session")],
+        [InlineKeyboardButton("➖ Leverage", callback_data="lev_down"),
+         InlineKeyboardButton(f"⚡ {leverage}x", callback_data="noop"),
+         InlineKeyboardButton("➕ Leverage", callback_data="lev_up")],
+        [InlineKeyboardButton("➖ Margin", callback_data="mar_down"),
+         InlineKeyboardButton(f"🎯 {margin}%", callback_data="noop"),
+         InlineKeyboardButton("➕ Margin", callback_data="mar_up")],
+        [InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")],
+    ]
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 
 # ── Market Now ──
@@ -1580,26 +1659,43 @@ def fetch_market_data():
     return "\n".join(lines), ", ".join(set(sources)) if sources else "None"
 
 def get_market_news():
-    """Fetch real crypto news from RSS feeds (no caching, no storage)."""
+    """Fetch fresh crypto news — random from top 5, max 6hr old."""
+    import random
+    from datetime import timezone
     feeds = [
-        "https://cointelegraph.com/rss",
-        "https://feeds.coindesk.com/coindesk/bitcoin",
-        "https://decrypt.co/feed",
-        "https://theblock.co/feed",
+        ("https://cointelegraph.com/rss/tag/bitcoin", "CT"),
+        ("https://cointelegraph.com/rss/tag/markets", "CT Markets"),
+        ("https://feeds.coindesk.com/coindesk/bitcoin", "CoinDesk"),
+        ("https://decrypt.co/feed", "Decrypt"),
+        ("https://theblock.co/feed", "The Block"),
     ]
+    random.shuffle(feeds)
     articles = []
-    for url in feeds:
+    now = datetime.now(timezone.utc)
+    for url, source in feeds:
         try:
             d = feedparser.parse(url)
             if d.entries:
-                entry = d.entries[0]  # most recent from this feed
-                title = entry.get('title', '').strip()
-                link = entry.get('link', '').strip()
-                # Strip UTM tracking params from URL
-                if '?' in link and 'utm_' in link:
-                    link = link.split('?')[0]
-                if title and link:
-                    articles.append((title, link))
+                # Pick random from top 5 entries
+                pool = d.entries[:5]
+                random.shuffle(pool)
+                for entry in pool:
+                    title = entry.get('title', '').strip()
+                    link = entry.get('link', '').strip()
+                    # Freshness check — skip if older than 6 hours
+                    published = entry.get('published_parsed')
+                    if published:
+                        import calendar
+                        pub_ts = calendar.timegm(published)
+                        age_hrs = (now.timestamp() - pub_ts) / 3600
+                        if age_hrs > 6:
+                            continue
+                    # Strip UTM
+                    if '?' in link and 'utm_' in link:
+                        link = link.split('?')[0]
+                    if title and link:
+                    articles.append((title, link, source))
+                        break
         except Exception as e:
             logger.debug(f"RSS fetch error from {url}: {e}")
     # Deduplicate by title and limit to 4
@@ -3747,11 +3843,18 @@ def main():
     # Callbacks
     app.add_handler(CallbackQueryHandler(main_cb, pattern="^main$"))
     app.add_handler(CallbackQueryHandler(toggle_mode_cb, pattern="^toggle_mode$"))
+    app.add_handler(CallbackQueryHandler(toggle_trading_mode_cb, pattern="^toggle_trading_mode$"))
+    app.add_handler(CallbackQueryHandler(socials_cb, pattern="^socials$"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.answer(), pattern="^noop$"))
     app.add_handler(CallbackQueryHandler(show_balance_cb, pattern="^show_balance$"))
     app.add_handler(CallbackQueryHandler(show_stats_cb, pattern="^show_stats$"))
     app.add_handler(CallbackQueryHandler(show_gains_cb, pattern="^show_gains$"))
     app.add_handler(CallbackQueryHandler(show_news_cb, pattern="^show_news$"))
     app.add_handler(CallbackQueryHandler(settings_cb, pattern="^settings$"))
+    app.add_handler(CallbackQueryHandler(set_trade_mode_cb, pattern="^set_mock$"))
+    app.add_handler(CallbackQueryHandler(set_trade_mode_cb, pattern="^set_real$"))
+    app.add_handler(CallbackQueryHandler(set_trade_mode_cb, pattern="^set_manual$"))
+    app.add_handler(CallbackQueryHandler(set_trade_mode_cb, pattern="^set_session$"))
     app.add_handler(CallbackQueryHandler(trade_menu_cb, pattern="^trade_menu$"))
     app.add_handler(CallbackQueryHandler(scan_pair_prompt_cb, pattern="^scan_pair_prompt$"))
     app.add_handler(CallbackQueryHandler(custom_scan_cb, pattern=r"^custom_scan_"))
