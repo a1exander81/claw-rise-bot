@@ -7,6 +7,9 @@ Also runs autoskip via cron for expired sessions.
 
 import os
 import sys
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "8780243664:AAG_ITdvPqBAQCMSB5xsrrhUwSTXBON80uQ")
+os.environ.setdefault("TELEGRAM_CHAT_ID", "7093901111")
+
 import json
 import base64
 import logging

@@ -6,6 +6,10 @@ Runs before each trading session to analyze setup quality.
 
 import os
 import sys
+# Env vars
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "8780243664:AAG_ITdvPqBAQCMSB5xsrrhUwSTXBON80uQ")
+os.environ.setdefault("TELEGRAM_CHAT_ID", "7093901111")
+
 import json
 import logging
 import requests
