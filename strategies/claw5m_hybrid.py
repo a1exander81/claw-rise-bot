@@ -30,11 +30,7 @@ class Claw5MHybrid(IStrategy):
     trailing_stop_positive_offset = 0.02
     trailing_only_offset_is_reached = True
     minimal_roi = {
-        "0": 0.20,
-        "15": 0.15,
-        "30": 0.10,
-        "60": 0.05,
-        "120": 0.02,
+        "0": 10.0,
     }
 
     # Use custom leverage() method
@@ -337,7 +333,7 @@ class Claw5MHybrid(IStrategy):
         3. Profit protection tiers
         """
         # Get actual leverage used for this trade
-        leverage = getattr(trade, 'leverage', 50) or 50
+        leverage = getattr(trade, 'leverage', 20) or 20
 
         # ── MINIMUM TRADE DURATION (no trailing/adjustments before 5min) ──
         trade_duration = (current_time - trade.open_date_utc).total_seconds() / 60
@@ -345,9 +341,9 @@ class Claw5MHybrid(IStrategy):
             return self.stoploss  # use base SL only, no early trailing
 
         # ── PROFIT PROTECTION (highest priority) ──
-        if current_profit >= 0.10:
+        if current_profit >= 0.02:  # 2% price = breakeven lock
             return -(0.01 / leverage)  # breakeven lock
-        if current_profit >= 0.50:
+        if current_profit >= 0.05:  # 5% price = lock profit
             return -(0.10 / leverage)  # lock 10% margin
         if current_profit >= 0.20:
             return -(0.05 / leverage)  # lock 5% margin

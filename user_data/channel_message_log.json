@@ -334,5 +334,117 @@
     "chat_id": "@RightclawTrade",
     "type": "headline_preview",
     "delete_at": "2026-04-23T18:30:07.952460Z"
+  },
+  {
+    "message_id": 1623,
+    "timestamp": "2026-04-24T04:00:06.068399Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T04:30:06.068373Z"
+  },
+  {
+    "message_id": 116,
+    "timestamp": "2026-04-24T04:00:06.663730Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T04:30:06.663704Z"
+  },
+  {
+    "message_id": 1624,
+    "timestamp": "2026-04-24T04:00:07.200420Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T04:30:07.200400Z"
+  },
+  {
+    "message_id": 117,
+    "timestamp": "2026-04-24T04:00:07.754960Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T04:30:07.754942Z"
+  },
+  {
+    "message_id": 1639,
+    "timestamp": "2026-04-24T08:00:06.139429Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T08:30:06.139403Z"
+  },
+  {
+    "message_id": 119,
+    "timestamp": "2026-04-24T08:00:06.844636Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T08:30:06.844613Z"
+  },
+  {
+    "message_id": 1640,
+    "timestamp": "2026-04-24T08:00:07.392312Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T08:30:07.392297Z"
+  },
+  {
+    "message_id": 120,
+    "timestamp": "2026-04-24T08:00:08.010350Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T08:30:08.010328Z"
+  },
+  {
+    "message_id": 1657,
+    "timestamp": "2026-04-24T12:00:07.189667Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T12:30:07.189483Z"
+  },
+  {
+    "message_id": 125,
+    "timestamp": "2026-04-24T12:00:07.807725Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T12:30:07.807704Z"
+  },
+  {
+    "message_id": 1658,
+    "timestamp": "2026-04-24T12:00:08.368526Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T12:30:08.368501Z"
+  },
+  {
+    "message_id": 126,
+    "timestamp": "2026-04-24T12:00:08.954891Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T12:30:08.954869Z"
+  },
+  {
+    "message_id": 1684,
+    "timestamp": "2026-04-24T16:00:06.087426Z",
+    "chat_id": "7093901111",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T16:30:06.087398Z"
+  },
+  {
+    "message_id": 135,
+    "timestamp": "2026-04-24T16:00:06.797014Z",
+    "chat_id": "@RightclawTrade",
+    "type": "ta_update",
+    "delete_at": "2026-04-24T16:30:06.796987Z"
+  },
+  {
+    "message_id": 1685,
+    "timestamp": "2026-04-24T16:00:07.379852Z",
+    "chat_id": "7093901111",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T16:30:07.379570Z"
+  },
+  {
+    "message_id": 136,
+    "timestamp": "2026-04-24T16:00:08.017068Z",
+    "chat_id": "@RightclawTrade",
+    "type": "headline_preview",
+    "delete_at": "2026-04-24T16:30:08.017046Z"
   }
 ]

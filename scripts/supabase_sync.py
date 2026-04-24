@@ -26,7 +26,7 @@ HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
-    "Prefer": "resolution=merge-duplicates"
+    "Prefer": "resolution=merge-duplicates,return=minimal"
 }
 
 def ft_get(endpoint):
@@ -41,7 +41,7 @@ def ft_get(endpoint):
 def supabase_upsert(table, data):
     try:
         r = requests.post(
-            f"{SUPABASE_URL}/rest/v1/{table}",
+            f"{SUPABASE_URL}/rest/v1/{table}?on_conflict=trade_id",
             headers=HEADERS,
             json=data if isinstance(data, list) else [data],
             timeout=10
