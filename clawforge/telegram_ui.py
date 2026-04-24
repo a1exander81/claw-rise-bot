@@ -706,7 +706,7 @@ def call_stepfun_skill(prompt, retries=2):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "llama-3.1-8b-instant",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
             "max_tokens": 500,
@@ -925,7 +925,7 @@ def call_stepfun_skill(prompt, retries=2):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
         "max_tokens": 500,
@@ -945,7 +945,7 @@ def call_stepfun_skill(prompt, retries=2):
     return None
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": "You are an expert crypto scalping analyst. Provide concise TA with confidence %% (80-90) and RRR."},
             {"role": "user", "content": prompt}
@@ -1456,9 +1456,9 @@ async def socials_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🎵 *TikTok*\n"
         "Coming soon\n\n"
         "📊 *Dashboard*\n"
-        "clawmimoto\-backtests\.vercel\.app\n\n"
+        "clawmimoto-backtests.vercel.app\n\n"
         "🌐 *Website*\n"
-        "clawtrader\-landing\.vercel\.app"
+        "clawtrader-landing.vercel.app"
     )
     kb = [[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="MarkdownV2")
@@ -1694,14 +1694,14 @@ def get_market_news():
                     if '?' in link and 'utm_' in link:
                         link = link.split('?')[0]
                     if title and link:
-                    articles.append((title, link, source))
+                        articles.append((title, link, source))
                         break
         except Exception as e:
             logger.debug(f"RSS fetch error from {url}: {e}")
     # Deduplicate by title and limit to 4
     seen = set()
     uniq = []
-    for title, link in articles:
+    for title, link, source in articles:
         key = title.lower()
         if key not in seen:
             seen.add(key)
