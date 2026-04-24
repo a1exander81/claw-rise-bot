@@ -96,3 +96,8 @@ generated-cards/
 # Dry-run database (local)
 tradesv3.dryrun.sqlite*
 
+user_data/channel_message_log.json
+user_data/*.json
+user_data/*.db
+logs/*.log
+scripts/session_cache/
