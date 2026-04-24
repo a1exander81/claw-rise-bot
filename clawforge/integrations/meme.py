@@ -1,8 +1,8 @@
 """Generate meme-style PnL cards for trade broadcasts."""
 
-from PIL import Image, ImageDraw, ImageFont
-import os
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "assets" / "templates"
 OUTPUT_DIR = Path(__file__).parent.parent / "generated" / "cards"

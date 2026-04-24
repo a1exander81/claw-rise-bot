@@ -1,7 +1,7 @@
 """StepFun API integration for market sentiment analysis."""
 import os
+
 import requests
-from typing import Optional
 
 STEPFUN_API_KEY = os.getenv("STEPFUN_API_KEY", "")
 STEPFUN_URL = "https://api.stepfun.ai/v1/chat/completions"
