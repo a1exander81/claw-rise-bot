@@ -4,11 +4,14 @@ Conservative trend-following with multi-timeframe confirmation.
 """
 
 from datetime import datetime, timezone, timedelta
+import logging
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy import IStrategy, IntParameter, BooleanParameter, DecimalParameter
 from freqtrade.persistence import Trade
 from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class Claw5MHybrid(IStrategy):
@@ -76,6 +79,13 @@ class Claw5MHybrid(IStrategy):
         """Initialize strategy - called once at bot startup."""
         super().init(config)
         self.custom_info = {}
+        self._logged_messages = set()
+
+    def log_once(self, message: str, level=logging.INFO):
+        """Log a message only once to avoid spam."""
+        if message not in self._logged_messages:
+            self._logged_messages.add(message)
+            logger.log(level, message)
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs) -> float:
@@ -341,12 +351,13 @@ class Claw5MHybrid(IStrategy):
             return self.stoploss  # use base SL only, no early trailing
 
         # ── PROFIT PROTECTION (highest priority) ──
-        if current_profit >= 0.02:  # 2% price = breakeven lock
-            return -(0.01 / leverage)  # breakeven lock
-        if current_profit >= 0.05:  # 5% price = lock profit
-            return -(0.10 / leverage)  # lock 10% margin
-        if current_profit >= 0.20:
-            return -(0.05 / leverage)  # lock 5% margin
+        # Check highest profit tiers first; tighter SL as profit increases
+        if current_profit >= 0.20:  # 20% profit = lock most gains
+            return -(0.02 / leverage)  # tightest: lock 2% margin
+        elif current_profit >= 0.05:  # 5% profit = moderate protection
+            return -(0.03 / leverage)  # moderate: lock 3% margin
+        elif current_profit >= 0.02:  # 2% profit = breakeven lock
+            return -(0.04 / leverage)  # loosest: lock 4% margin
 
         # ── ADAPTIVE TOLERANCE + SESSION MULTIPLIER ──
         margin_sl = self.get_sl_tolerance()

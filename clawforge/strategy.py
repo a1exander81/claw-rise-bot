@@ -3,11 +3,11 @@ Claw5MSniper — Base strategy for ClawForge.
 5M TF, ISOLATED margin, 3 trades/day max, trailing SL at +50%.
 """
 
-from datetime import time, datetime, timezone
+from datetime import datetime
+
 import pandas as pd
 import pandas_ta as ta
-from freqtrade.strategy import IStrategy, IntParameter, DecimalParameter, BooleanParameter
-from freqtrade.persistence import Trade
+from freqtrade.strategy import BooleanParameter, DecimalParameter, IntParameter, IStrategy
 
 
 class Claw5MSniper(IStrategy):
@@ -103,9 +103,9 @@ class Claw5MSniper(IStrategy):
             hour = ts.hour
             if 0 <= hour < 8:
                 return "NY"
-            elif 8 <= hour < 16:
+            if 8 <= hour < 16:
                 return "TOKYO"
-            elif 16 <= hour < 24:
+            if 16 <= hour < 24:
                 return "LONDON"
             return "OTHER"
         return date_series.apply(_session)

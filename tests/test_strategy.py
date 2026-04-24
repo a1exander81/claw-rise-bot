@@ -1,9 +1,10 @@
 """Tests for ClawForge strategy logic."""
 
-import pytest
 import pandas as pd
-import pandas_ta as ta
+import pytest
+
 from clawforge.strategy import Claw5MSniper
+
 
 @pytest.fixture
 def sample_data():

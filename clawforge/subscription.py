@@ -1,9 +1,8 @@
 """Web3 subscription gating — Solana Pay verification."""
 
-import os
-from typing import Optional
-from pathlib import Path
 import json
+from pathlib import Path
+
 
 class SubscriptionGate:
     """Check if user has paid for ClawForge access."""
