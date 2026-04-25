@@ -2014,7 +2014,9 @@ async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 SCAN", callback_data="ai_scan"),
          InlineKeyboardButton("💰 BALANCE", callback_data="show_balance")],
         [InlineKeyboardButton("📈 POSITIONS", callback_data="positions"),
-         InlineKeyboardButton("📰 NEWS", callback_data="show_news")],
+         InlineKeyboardButton("📋 HISTORY", callback_data="history")],
+        [InlineKeyboardButton("📰 NEWS", callback_data="show_news"),
+         InlineKeyboardButton("📡 SOCIALS", callback_data="socials")],
         [InlineKeyboardButton("🤖 SESSION MODE", callback_data="session_mode"),
          InlineKeyboardButton("🎯 MANUAL MODE", callback_data="manual_mode")],
         [InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings"),
@@ -3816,6 +3818,49 @@ async def refresh_pair_detail_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"refresh_pair_detail error: {e}", exc_info=True)
         await q.edit_message_text(f"❌ Refresh failed: {str(e)[:100]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BACK", callback_data="main")]]))
+async def history_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    try:
+        import urllib.request, json, ssl
+        SUPABASE_URL = "https://aauypnqsmyxzacchbiya.supabase.co"
+        SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdXlwbnFzbXl4emFjY2hiaXlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5Nzg2MDUsImV4cCI6MjA5MjU1NDYwNX0.H8RbnYbUb55jr0RnOVpca2wkYgv_jKs8NuUHjruqWls"
+        url = f"{SUPABASE_URL}/rest/v1/trades?is_open=eq.false&order=close_date.desc&limit=10"
+        req = urllib.request.Request(url, headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"})
+        ctx2 = ssl.create_default_context()
+        with urllib.request.urlopen(req, context=ctx2, timeout=10) as res:
+            trades = json.loads(res.read().decode())
+        if not trades:
+            text = "📋 *TRADE HISTORY*\n\nNo closed trades yet\."
+        else:
+            lines = ["📋 *TRADE HISTORY*", "━━━━━━━━━━━━━━━━━━━━", ""]
+            for t in trades:
+                pair = (t.get("pair") or "").replace("/USDT:USDT", "").replace("USDT", "")
+                direction = t.get("direction") or "LONG"
+                profit_pct = (t.get("profit_ratio") or 0) * 100
+                profit_abs = t.get("profit_abs") or 0
+                exit_reason = (t.get("exit_reason") or "").replace("_", " ")
+                close_date = (t.get("close_date") or "")[:16].replace("T", " ")
+                leverage = t.get("leverage") or 20
+                icon = "✅" if profit_pct > 0 else "❌"
+                sign = "+" if profit_pct > 0 else ""
+                lines.append(
+                    f"{icon} *{pair}* {direction} `{leverage}x`\n"
+                    f"   P&L: `{sign}{profit_pct:.2f}%` · ${sign}{profit_abs:.2f}\n"
+                    f"   Exit: `{exit_reason}`\n"
+                    f"   📅 `{close_date}`\n"
+                )
+            lines.append("━━━━━━━━━━━━━━━━━━━━")
+            text = "\n".join(lines)
+    except Exception as e:
+        logger.error(f"History fetch error: {e}")
+        text = "📋 *TRADE HISTORY*\n\nFailed to load\. Try again\."
+    kb = [[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]]
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+
 def main():
     if not TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set")
@@ -3885,6 +3930,7 @@ def main():
     app.add_handler(CallbackQueryHandler(skip_pair_cb, pattern=r'^skip_'))
     app.add_handler(CallbackQueryHandler(session_approve_cb, pattern=r'^session_approve_'))
     app.add_handler(CallbackQueryHandler(session_skip_cb, pattern=r'^session_skip_'))
+    app.add_handler(CallbackQueryHandler(history_cb, pattern='^history$'))
     app.add_error_handler(error_handler)
     logger.info("Starting Clawmimoto Telegram UI...")
     # Start background snapshot thread (every 4 hours)
