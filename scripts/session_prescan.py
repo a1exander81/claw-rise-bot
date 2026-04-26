@@ -30,7 +30,7 @@ SESSIONS = {
         "active_end_sgt": "07:00",
         "pairs": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
         "margin_pct": 1.5,
-        "sl_margin": 0.003,  # 0.3%
+        "sl_margin": 0.008,  # 0.8% - wider for pre-london noise
         "min_rrr": 2.5,
     },
     "london": {
@@ -40,7 +40,7 @@ SESSIONS = {
         "active_end_sgt": "20:00",
         "pairs": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"],
         "margin_pct": 1.5,
-        "sl_margin": 0.004,
+        "sl_margin": 0.010,  # 1.0% - london volatility
         "min_rrr": 3.0,
     },
     "ny": {
@@ -50,7 +50,7 @@ SESSIONS = {
         "active_end_sgt": "23:00",
         "pairs": ["BTC/USDT", "ETH/USDT"],
         "margin_pct": 2.0,
-        "sl_margin": 0.005,
+        "sl_margin": 0.008,  # 0.8% - ny session
         "min_rrr": 2.5,
     },
 }
@@ -255,9 +255,10 @@ def send_prescan_alert(session_key: str, results: list):
     for r in results:
         lines.append(
             f"{r['symbol']} {r['direction']}\n"
+            f"Market: ${r.get('current_price', r['entry']):,.2f}\n"
             f"Entry: ${r['entry']} (limit)\n"
-            f"SL: ${r['sl']} ({'-0.5%' if r['direction']=='LONG' else '+0.5%'})\n"
-            f"TP: ${r['tp']} (+{r['rrr']*100:.1f}%)\n"
+            f"SL: ${r['sl']} ({(r['sl']-r['entry'])/r['entry']*100:+.2f}%)\n"
+            f"TP: ${r['tp']} (+{abs(r['tp']-r['entry'])/r['entry']*100:.2f}%)\n"
             f"RRR: {r['rrr']:.1f}:1 ✅\n"
             f"ATR: {r['atr_pct']:.1f}% (volatile ✅)\n"
         )
@@ -265,7 +266,6 @@ def send_prescan_alert(session_key: str, results: list):
 
     lines.append(f"⏰ Executing in 15min")
     lines.append("")
-    lines.append("[✅ APPROVE ALL]  [❌ SKIP SESSION]")
 
     text = "\n".join(lines)
 
