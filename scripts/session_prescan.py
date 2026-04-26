@@ -264,7 +264,7 @@ def send_prescan_alert(session_key: str, results: list):
         )
         lines.append("")
 
-    lines.append(f"⏰ Executing in 15min")
+    lines.append(f"⏰ Executing in 30min")
     lines.append("")
 
     text = "\n".join(lines)

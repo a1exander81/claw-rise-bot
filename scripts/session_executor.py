@@ -148,7 +148,7 @@ SESSIONS = {
 }
 
 CACHE_DIR = Path(__file__).absolute().parent / "session_cache"
-EXPIRE_MINUTES = 10
+EXPIRE_MINUTES = 30
 
 
 def approve_session(session_key: str, chat_id: int):
