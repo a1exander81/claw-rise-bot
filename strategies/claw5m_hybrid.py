@@ -26,8 +26,8 @@ class Claw5MHybrid(IStrategy):
     max_open_trades = 3
     stoploss = -0.02
     trailing_stop = True
-    trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.02
+    trailing_stop_positive = 0.005
+    trailing_stop_positive_offset = 0.015
     trailing_only_offset_is_reached = True
     minimal_roi = {
         "0": 10.0,
@@ -385,7 +385,9 @@ class Claw5MHybrid(IStrategy):
             # ── FIX 2: Extended blocklist + price guard ──
             BLOCKLIST = {
                 'BABYDOGE','CHEEMS','MOG','FLOKI','CHIP','QUBIC',
-                'SATS','RATS','ORDI','CL','GC','SI','NG','XAUT','PAXG'
+                'SATS','RATS','ORDI','CL','GC','SI','NG','XAUT','PAXG',
+                'ORCA','BONK','PEPE','WIF','BOME','MYRO','POPCAT','SLERF',
+                'NEIRO','MOODENG','TURBO','COQ','GIGA','FRED','PNUT'
             }
             base = pair.split('/')[0] if '/' in pair else pair.split(':')[0]
             if base in BLOCKLIST:
