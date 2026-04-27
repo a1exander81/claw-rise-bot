@@ -1403,7 +1403,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [wins_button(), gains_button()],
         [InlineKeyboardButton("📈 TRADE MENU", callback_data="trade_menu")],
         [InlineKeyboardButton("📊 POSITIONS", callback_data="positions")],
-        [InlineKeyboardButton("📈 MARKET NOW", callback_data="market_now")],
+        [InlineKeyboardButton("🧠 MACRO INTEL", callback_data="market_now")],
     ]
     await update.message.reply_text(f"🏠 **Clawmimoto Command Center**\n\n{bal_line}\n\n{news}", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -1595,6 +1595,37 @@ async def show_gains_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="main")]]))
 
 # ── News & Settings Wrappers ─-
+
+async def toggle_macro_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Toggle MACRO Sentinel mode ON/OFF."""
+    if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
+        return
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    state = get_state(chat_id)
+    macro_on = not state.get("macro_on", False)
+    state["macro_on"] = macro_on
+
+    if macro_on:
+        await q.answer("🧠 MACRO ON — Sentinel running in background", show_alert=True)
+        # Run Sentinel in background silently
+        import asyncio, subprocess, sys
+        from pathlib import Path
+        script = Path("/docker/openclaw-0jn0/data/.openclaw/workspace/clawmimoto-bot/scripts/sentinel_agent.py")
+        env = {**__import__('os').environ, "TELEGRAM_CHAT_ID": str(chat_id)}
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(script), "report",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env
+        )
+        asyncio.create_task(proc.wait())
+    else:
+        await q.answer("🔴 MACRO OFF — Normal mode active", show_alert=True)
+
+    # Refresh full trade menu
+    await main_cb(update, ctx)
+
 async def show_news_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
         return
@@ -2162,7 +2193,7 @@ async def trade_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("💰 BALANCE", callback_data="show_balance")],
         [InlineKeyboardButton("📈 POSITIONS", callback_data="positions"),
          InlineKeyboardButton("📋 HISTORY", callback_data="history")],
-        [InlineKeyboardButton("📰 NEWS", callback_data="show_news"),
+        [InlineKeyboardButton("🟢 MACRO ON" if state.get("macro_on") else "🔴 MACRO OFF", callback_data="toggle_macro"),
          InlineKeyboardButton("📡 SOCIALS", callback_data="socials")],
         [InlineKeyboardButton("🤖 SESSION MODE", callback_data="session_mode"),
          InlineKeyboardButton("🎯 MANUAL MODE", callback_data="manual_mode")],
@@ -2653,6 +2684,45 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user_state[chat_id] = {"leverage": 50, "margin": 1, "trade_mode": "MOCK", "selected_pairs": []}
     state = user_state.get(chat_id, {})
     logger.info(f"Text handler: chat={chat_id} text={text[:100]}")
+
+    # Handle $BTC $ETH style cashtags
+    if text.startswith("$"):
+        base = text[1:].split()[0].strip().upper()
+        base = ''.join(c for c in base if c.isalpha())
+        if 2 <= len(base) <= 10:
+            pair = f"{base}/USDT"
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔍 Detected: *{pair}*\nRunning AI scan...",
+                parse_mode="Markdown"
+            )
+            results = ai_scan_pairs(custom_pairs=[pair], chat_id=chat_id)
+            if results:
+                await send_scan_message(chat_id, results, ctx)
+            else:
+                await ctx.bot.send_message(chat_id=chat_id,
+                    text=f"⚠️ No setup found for {pair}. Try another pair.")
+            return
+
+    # Handle BTCUSDT / BTC/USDT / BTCUSDT:USDT typed directly
+    import re as _re
+    pair_match = _re.match(r'^([A-Z]{2,10})(USDT|/USDT|/USDT:USDT)?$', text.strip())
+    if pair_match and not text.startswith("HTTP"):
+        base = pair_match.group(1)
+        if base not in {"THE", "FOR", "AND", "NOT", "BUT", "NEW", "ALL"}:
+            pair = f"{base}/USDT"
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔍 Detected: *{pair}*\nRunning AI scan...",
+                parse_mode="Markdown"
+            )
+            results = ai_scan_pairs(custom_pairs=[pair], chat_id=chat_id)
+            if results:
+                await send_scan_message(chat_id, results, ctx)
+            else:
+                await ctx.bot.send_message(chat_id=chat_id,
+                    text=f"⚠️ No setup found for {pair}. Try another pair.")
+            return
 
     # NEW — Link scanning: if message starts with http, extract pair and run AI scan
     if text.startswith("HTTP"):
@@ -3984,7 +4054,7 @@ async def history_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return r.json()
         trades = await asyncio.get_event_loop().run_in_executor(None, _fetch_history)
         if not trades:
-            text = "📋 *TRADE HISTORY*\n\nNo closed trades yet\."
+            text = "📋 *TRADE HISTORY*\n\nNo closed trades yet."
         else:
             lines = ["📋 *TRADE HISTORY*", "━━━━━━━━━━━━━━━━━━━━", ""]
             for t in trades:
@@ -4008,7 +4078,7 @@ async def history_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text = "\n".join(lines)
     except Exception as e:
         logger.error(f"History fetch error: {e}")
-        text = "📋 *TRADE HISTORY*\n\nFailed to load\. Try again\."
+        text = "📋 *TRADE HISTORY*\n\nFailed to load. Try again."
     kb = [[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]]
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -4047,6 +4117,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_stats_cb, pattern="^show_stats$"))
     app.add_handler(CallbackQueryHandler(show_gains_cb, pattern="^show_gains$"))
     app.add_handler(CallbackQueryHandler(show_news_cb, pattern="^show_news$"))
+    app.add_handler(CallbackQueryHandler(toggle_macro_cb, pattern="^toggle_macro$"))
     app.add_handler(CallbackQueryHandler(settings_cb, pattern="^settings$"))
     app.add_handler(CallbackQueryHandler(settings_tab_cb, pattern="^settings_tab_(manual|session)$"))
     app.add_handler(CallbackQueryHandler(toggle_sutamm_cb, pattern="^toggle_sutamm$"))
