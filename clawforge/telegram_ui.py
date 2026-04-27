@@ -1608,20 +1608,12 @@ async def toggle_macro_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state["macro_on"] = macro_on
 
     if macro_on:
-        await q.answer("🧠 MACRO mode ON — running Sentinel...", show_alert=False)
-        await ctx.bot.send_message(
-            chat_id=chat_id,
-            text="🧠 *CLAWTCHER SENTINEL* is now active\n\nRunning macro analysis\.\.\.",
-            parse_mode="Markdown"
-        )
-        # Run Sentinel in background
+        await q.answer("🧠 MACRO ON — Sentinel running in background", show_alert=True)
+        # Run Sentinel in background silently
         import asyncio, subprocess, sys
         from pathlib import Path
         script = Path("/docker/openclaw-0jn0/data/.openclaw/workspace/clawmimoto-bot/scripts/sentinel_agent.py")
-        env = {
-            **__import__('os').environ,
-            "TELEGRAM_CHAT_ID": str(chat_id)
-        }
+        env = {**__import__('os').environ, "TELEGRAM_CHAT_ID": str(chat_id)}
         proc = await asyncio.create_subprocess_exec(
             sys.executable, str(script), "report",
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1629,22 +1621,10 @@ async def toggle_macro_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         asyncio.create_task(proc.wait())
     else:
-        await q.answer("🔴 MACRO mode OFF", show_alert=False)
-        await ctx.bot.send_message(
-            chat_id=chat_id,
-            text="🔴 MACRO mode disabled\. Normal scanning active\.",
-            parse_mode="Markdown"
-        )
+        await q.answer("🔴 MACRO OFF — Normal mode active", show_alert=True)
 
-    # Refresh trade menu
-    from telegram import InlineKeyboardMarkup
-    real, mock = get_balance()
-    bal = format_balance(real, mock, state.get("trade_mode", "MOCK"))
-    macro_btn = "🟢 MACRO ON" if macro_on else "🔴 MACRO OFF"
-    await q.edit_message_text(
-        f"⚙️ MACRO mode: *{'ON' if macro_on else 'OFF'}*",
-        parse_mode="Markdown"
-    )
+    # Refresh full trade menu
+    await main_cb(update, ctx)
 
 async def show_news_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await enforce_access(update, ctx, allow_whitelisted=True, require_channel=True):
@@ -4074,7 +4054,7 @@ async def history_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return r.json()
         trades = await asyncio.get_event_loop().run_in_executor(None, _fetch_history)
         if not trades:
-            text = "📋 *TRADE HISTORY*\n\nNo closed trades yet\."
+            text = "📋 *TRADE HISTORY*\n\nNo closed trades yet."
         else:
             lines = ["📋 *TRADE HISTORY*", "━━━━━━━━━━━━━━━━━━━━", ""]
             for t in trades:
@@ -4098,7 +4078,7 @@ async def history_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text = "\n".join(lines)
     except Exception as e:
         logger.error(f"History fetch error: {e}")
-        text = "📋 *TRADE HISTORY*\n\nFailed to load\. Try again\."
+        text = "📋 *TRADE HISTORY*\n\nFailed to load. Try again."
     kb = [[InlineKeyboardButton("⬅️ BACK", callback_data="trade_menu")]]
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
