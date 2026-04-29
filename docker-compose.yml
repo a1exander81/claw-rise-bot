@@ -55,6 +55,7 @@ services:
       - ./clawforge:/app/clawforge
       - ./generated:/app/generated
       - ./scripts:/app/scripts
+      - ./data:/app/data
     environment:
       - BYBIT_API_KEY=${BYBIT_API_KEY}
       - BYBIT_API_SECRET=${BYBIT_API_SECRET}
