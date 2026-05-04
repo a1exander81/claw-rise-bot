@@ -1,11 +1,11 @@
 # clawforge/mock_engine.py
 """Mock trading engine with CLUSDT virtual balance backed by Supabase."""
-import ccxt
 import logging
-import requests
-from datetime import datetime, timezone
-from typing import Optional, Tuple
 import os
+from datetime import UTC, datetime
+
+import ccxt
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,7 +31,7 @@ def _headers() -> dict:
     }
 
 
-def _rest(method: str, table: str, params: str = "", json_data=None) -> Optional[list]:
+def _rest(method: str, table: str, params: str = "", json_data=None) -> list | None:
     """Generic Supabase REST helper."""
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     if params:
@@ -78,7 +78,7 @@ class MockEngine:
                 json_data={
                     "user_id": self.user_id,
                     "balance_clusdt": INITIAL_BALANCE,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
             )
 
@@ -106,7 +106,7 @@ class MockEngine:
     # ── Order simulation ─────────────────────────────────────
 
     def place_order(
-        self, symbol: str, side: str, qty: float, price: Optional[float] = None
+        self, symbol: str, side: str, qty: float, price: float | None = None
     ) -> dict:
         """Simulate a limit order. Fills immediately if market price permits.
 
@@ -137,7 +137,7 @@ class MockEngine:
                 "price": fill_price,
                 "pnl_clusdt": 0.0,
                 "fee_clusdt": fee,
-                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_at": datetime.now(UTC).isoformat(),
                 "strategy": "mock",
             }
             _rest("POST", "mock_trades", json_data=trade_data)
@@ -145,7 +145,7 @@ class MockEngine:
             return {"status": "filled", "price": fill_price}
         return {"status": "open", "message": "Price not reached"}
 
-    def close_position(self, symbol: str) -> Tuple[bool, str]:
+    def close_position(self, symbol: str) -> tuple[bool, str]:
         """Close an open mock position at current market price."""
         pos = self.get_position(symbol)
         if not pos:
@@ -177,7 +177,7 @@ class MockEngine:
                 "price": current_price,
                 "pnl_clusdt": net_pnl,
                 "fee_clusdt": fee,
-                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_at": datetime.now(UTC).isoformat(),
                 "strategy": "mock",
             },
         )
@@ -192,7 +192,7 @@ class MockEngine:
     def _update_position(self, symbol: str, side: str, qty: float, price: float):
         """Upsert mock position (volume-weighted average entry)."""
         existing = self.get_position(symbol)
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         if existing:
             old_size = float(existing["size"])
             old_entry = float(existing["entry_price"])
@@ -224,7 +224,7 @@ class MockEngine:
                 },
             )
 
-    def get_position(self, symbol: str) -> Optional[dict]:
+    def get_position(self, symbol: str) -> dict | None:
         """Return position dict or None."""
         rows = _rest(
             "GET",

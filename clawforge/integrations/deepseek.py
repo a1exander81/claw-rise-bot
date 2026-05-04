@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -52,7 +52,7 @@ def _call_deepseek(
     messages: list[dict[str, str]],
     model: str = "deepseek-v4-pro",
     retries: int = DEFAULT_RETRIES,
-) -> Optional[str]:
+) -> str | None:
     """Call DeepSeek Chat via REST API with exponential-backoff retry.
 
     Returns the response content string, or None on repeated failure.
@@ -212,7 +212,7 @@ def get_sentiment_score(pair: str) -> float:
 
     if bias == "bullish":
         return 0.5 + confidence * 0.5   # → [0.5, 1.0]
-    elif bias == "bearish":
+    if bias == "bearish":
         return 0.5 - confidence * 0.5   # → [0.0, 0.5]
     return 0.5
 
@@ -231,6 +231,6 @@ def get_trade_advice(pair: str, strategy: str = "claw") -> TradeAdvice:
 
     if bias == "bearish":
         return TradeAdvice(risk_pct=RISK_PCT_BEARISH, timeframe="short")
-    elif bias == "bullish":
+    if bias == "bullish":
         return TradeAdvice(risk_pct=RISK_PCT_BULLISH, timeframe="long")
     return TradeAdvice(risk_pct=RISK_PCT_NEUTRAL, timeframe="medium")
