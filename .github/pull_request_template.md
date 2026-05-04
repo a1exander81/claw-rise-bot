@@ -33,4 +33,4 @@
 
 ---
 
-**CodeRabbit AI Review:** ✅ Enabled
+**CodeRabbit AI Review:** ✅ Enabled — This PR will be automatically reviewed by CodeRabbit for security, risk management, and code quality.

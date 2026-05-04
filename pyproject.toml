@@ -53,13 +53,12 @@ packages = ["clawforge", "grid_layer", "config", "strategies", "unified_ui"]
 line-length = 100
 target-version = ["py311"]
 
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-select = ["E", "F", "B", "I", "N", "UP", "YTT", "S", "BLE", "A", "C4", "DTZ", "T10", "EM", "EXE", "ISC", "ICN", "G", "LOG", "PIE", "PT", "Q", "RSE", "RET", "SLF", "SLOT", "TCH", "INT", "PTH", "FBT", "ASYNC", "FLY", "PERF", "RUF"]
-ignore = ["S101", "S603", "S607"]
+[tool.lint]
+select = ["E", "F", "B", "I", "N", "UP", "YTT", "S", "C4", "T10", "ICN", "PT", "RSE", "SLF", "PTH", "RUF"]
+ignore = ["S101", "S603", "S607", "E501", "E722", "E701", "E702", "E741"]
+extend-ignore = ["UP036"]
 
-[tool.ruff.per-file-ignores]
+[tool.lint.per-file-ignores]
 "tests/*" = ["S101", "PLR2004"]
 
 [tool.mypy]

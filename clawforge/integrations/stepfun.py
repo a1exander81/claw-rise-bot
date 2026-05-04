@@ -1,8 +1,9 @@
 # clawforge/integrations/stepfun.py
 """AI market analysis – powered by DeepSeek (OpenAI‑compatible)."""
-import os
 import json
 import logging
+import os
+
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def analyze_sentiment(pair: str) -> dict:
         return result
     except Exception as e:
         logger.error(f"DeepSeek sentiment analysis failed: {e}")
-        return {"bias": "neutral", "confidence": 0.5, "summary": f"AI error: {str(e)}"}
+        return {"bias": "neutral", "confidence": 0.5, "summary": f"AI error: {e!s}"}
 
 def get_trade_advice(pair: str, strategy: str = "claw") -> dict:
     """
@@ -49,7 +50,6 @@ def get_trade_advice(pair: str, strategy: str = "claw") -> dict:
     sentiment = analyze_sentiment(pair)
     if sentiment["bias"] == "bearish":
         return {"risk_pct": 0.3, "timeframe": "short"}
-    elif sentiment["bias"] == "bullish":
+    if sentiment["bias"] == "bullish":
         return {"risk_pct": 0.8, "timeframe": "long"}
-    else:
-        return {"risk_pct": 0.5, "timeframe": "medium"}
+    return {"risk_pct": 0.5, "timeframe": "medium"}

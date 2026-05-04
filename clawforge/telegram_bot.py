@@ -1,15 +1,15 @@
 """ClawForge Telegram Bot — Pure button-driven UI."""
 
 import logging
-from typing import Optional
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from freqtrade.rpc import RPC
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
 )
-from freqtrade.rpc import RPC
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ async def execute_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── Builder ──
 
-def build_bot(token: str, rpc: Optional[RPC] = None) -> Application:
+def build_bot(token: str, rpc: RPC | None = None) -> Application:
     app = Application.builder().token(token).build()
     app.bot_data["rpc"] = rpc
 

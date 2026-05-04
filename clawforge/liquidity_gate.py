@@ -5,12 +5,12 @@ Provides real-time market condition checks so both Claw (directional)
 and Grid (contrarian) layers can adapt to current liquidity, volume,
 and spread conditions — with specialized weekend mode.
 """
-import os
 import logging
-from typing import Optional
+import os
+
 import ccxt
 
-from config.sessions import get_market_state, TRADING_SESSIONS
+from config.sessions import TRADING_SESSIONS, get_market_state
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class LiquidityCache:
     def __init__(self):
         self._data: dict[str, tuple] = {}  # key -> (result, timestamp)
 
-    def get(self, key: str) -> Optional[tuple]:
+    def get(self, key: str) -> tuple | None:
         import time
         cached = self._data.get(key)
         if cached and (time.time() - cached[1]) < COOLDOWN_SECONDS:
