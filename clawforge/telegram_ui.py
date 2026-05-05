@@ -7,6 +7,14 @@ POSITIONS: list with share PNL
 """
 
 import asyncio
+# AI Soul: DeepSeek SMC+ICT scanner (replaces Groq/StepFun)
+from clawforge.ai_scan import (
+    ai_scan_pairs,
+    call_stepfun_skill,
+    gate_signal,
+    analyze_session,
+    get_price,
+)
 import base64
 import concurrent.futures
 import hashlib
@@ -391,7 +399,7 @@ def get_bybit_hot_pairs(limit: int = 5) -> list:
                 return pairs
     except Exception as e:
         logger.debug(f"Bybit hot pairs error: {e}")
-    fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"][:limit]
+    fallback = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT", "XRP/USDT:USDT"][:limit]
     logger.warning("Bybit hot pairs fetch failed, using fallback USDT list")
     return fallback
 
@@ -950,7 +958,7 @@ def get_bybit_top_movers(limit=20):
             timeout=10
         )
         if r.status_code != 200:
-            return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+            return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT"]
         data = r.json().get("result", {}).get("list", [])
         # Filter: USDT pairs only, price > $1, sort by 24h volume
         filtered = [
@@ -2286,7 +2294,7 @@ async def scan_pair_prompt_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     # Predefined popular pairs (Binance symbols)
-    popular_pairs = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "DOGE/USDT", "ADA/USDT", "AVAX/USDT"]
+    popular_pairs = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT"]
     # 2x2 grid for all 8 (4 rows)
     kb = []
     for i in range(0, len(popular_pairs), 2):
@@ -2727,19 +2735,19 @@ def extract_pair_from_link(url: str):
                 base = m.group(1)
                 quote = m.group(2)
                 # Normalize quote to USDT for consistency
-                return f"{base}/USDT"
+                return f"{base}/USDT:USDT"
 
         # Binance — spot or futures paths
         if "binance.com" in domain:
             m = re.search(r"/([A-Z]{2,10})[_-]?(USDT|BTC|ETH)", path)
             if m:
-                return f"{m.group(1)}/USDT"
+                return f"{m.group(1)}/USDT:USDT"
 
         # BingX
         if "bingx.com" in domain:
             m = re.search(r"/([A-Z]{2,10})-?(USDT|BTC|ETH)", path)
             if m:
-                return f"{m.group(1)}/USDT"
+                return f"{m.group(1)}/USDT:USDT"
 
         # TradingView — symbol in query param
         if "tradingview.com" in domain:
@@ -2747,16 +2755,16 @@ def extract_pair_from_link(url: str):
             symbol = qs.get("symbol", [""])[0].upper()
             m = re.search(r":?([A-Z]{2,10})(USDT|BTC|ETH)", symbol)
             if m:
-                return f"{m.group(1)}/USDT"
+                return f"{m.group(1)}/USDT:USDT"
 
         # Twitter/X — ask StepFun to identify pair from URL context
         if "twitter.com" in domain or "x.com" in domain:
-            prompt = f"This is a crypto Twitter URL: {url}\nWhat trading pair is being discussed? Reply with only the pair symbol like BTC/USDT or UNKNOWN."
+            prompt = f"This is a crypto Twitter/X URL: {url}\nWhat trading pair is being discussed? Reply with ONLY the Bybit perpetual pair symbol like BTC/USDT:USDT or UNKNOWN. No explanation."
             ai_text = call_stepfun_skill(prompt, retries=1)
             if ai_text and "UNKNOWN" not in ai_text.upper():
                 m = re.search(r"([A-Z]{2,10})/USDT", ai_text.upper())
                 if m:
-                    return f"{m.group(1)}/USDT"
+                    return f"{m.group(1)}/USDT:USDT"
             return None
     except Exception:
         pass
@@ -2778,7 +2786,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         base = text[1:].split()[0].strip().upper()
         base = "".join(c for c in base if c.isalpha())
         if 2 <= len(base) <= 10:
-            pair = f"{base}/USDT"
+            pair = f"{base}/USDT:USDT"
             await ctx.bot.send_message(
                 chat_id=chat_id,
                 text=f"🔍 Detected: *{pair}*\nRunning AI scan...",
@@ -2798,7 +2806,7 @@ async def text_input_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if pair_match and not text.startswith("HTTP"):
         base = pair_match.group(1)
         if base not in {"THE", "FOR", "AND", "NOT", "BUT", "NEW", "ALL"}:
-            pair = f"{base}/USDT"
+            pair = f"{base}/USDT:USDT"
             await ctx.bot.send_message(
                 chat_id=chat_id,
                 text=f"🔍 Detected: *{pair}*\nRunning AI scan...",
@@ -3100,7 +3108,7 @@ def extract_pair_from_binance_url(url):
                 symbol = path_parts[i + 1].upper()
                 if symbol.endswith("USDT"):
                     base = symbol[:-4]
-                    return f"{base}/USDT"
+                    return f"{base}/USDT:USDT"
         # Spot: /trade/PAIR (e.g. GLMR_USDT)
         for i, part in enumerate(path_parts):
             if part.lower() == "trade" and i + 1 < len(path_parts):
@@ -3113,7 +3121,7 @@ def extract_pair_from_binance_url(url):
             symbol = path_parts[-1].upper()
             if symbol.endswith("USDT"):
                 base = symbol[:-4]
-                return f"{base}/USDT"
+                return f"{base}/USDT:USDT"
     except Exception as e:
         logger.debug(f"Binance URL parse error: {e}")
     return None
