@@ -3,6 +3,7 @@ Claw5MSniper — Base strategy for ClawForge.
 5M TF, ISOLATED margin, 3 trades/day max, trailing SL at +50%.
 """
 
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -17,12 +18,32 @@ class Claw5MSniper(IStrategy):
     timeframe = "5m"
     startup_candle_count = 50
 
-    # ── Risk Management ──
+    # ── Risk Management (configurable via env/config) ──
     max_open_trades = 3
-    stoploss = -0.25
-    trailing_stop = True
-    trailing_stop_positive = 0.5
-    trailing_stop_positive_offset = 0.51
+
+    @property
+    def stoploss(self) -> float:
+        """Configurable stoploss. Range: -0.005 to -0.05 (0.5% to 5%)"""
+        val = float(os.getenv("CLAW_STOPLOSS", "-0.01"))
+        return max(-0.05, min(-0.005, val))
+
+    @property
+    def trailing_stop(self) -> bool:
+        """Configurable trailing stop enable/disable"""
+        return os.getenv("CLAW_TRAILING_STOP", "true").lower() in ("true", "1", "yes")
+
+    @property
+    def trailing_stop_positive(self) -> float:
+        """Configurable trailing stop positive. Range: 0.005 to 0.03 (0.5% to 3%)"""
+        val = float(os.getenv("CLAW_TRAILING_STOP_POSITIVE", "0.01"))
+        return max(0.005, min(0.03, val))
+
+    @property
+    def trailing_stop_positive_offset(self) -> float:
+        """Configurable trailing stop positive offset. Range: 0.005 to 0.05 (0.5% to 5%)"""
+        val = float(os.getenv("CLAW_TRAILING_STOP_POSITIVE_OFFSET", "0.012"))
+        return max(0.005, min(0.05, val))
+
     trailing_only_offset_is_reached = True
     minimal_roi = {"0": 1.0}
 
@@ -40,9 +61,9 @@ class Claw5MSniper(IStrategy):
     ema_fast = IntParameter(5, 20, default=10, space="buy")
     ema_slow = IntParameter(20, 50, default=30, space="buy")
 
-    # ── StepFun Sentiment ──
-    use_sentiment = BooleanParameter(default=False, space="buy")
-    sentiment_threshold = DecimalParameter(0.6, 0.9, default=0.75, space="buy")
+    # ── DeepSeek AI Sentiment ──
+    use_sentiment = BooleanParameter(default=True, space="buy")
+    sentiment_threshold = DecimalParameter(0.6, 0.9, default=0.82, space="buy")
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         df = dataframe.copy()
@@ -71,15 +92,16 @@ class Claw5MSniper(IStrategy):
         cond_rsi = self.rsi_enabled.value & (df["rsi"] < self.rsi_buy.value)
         cond_macd = self.macd_enabled.value & (df["macd"] > df["macdsignal"]) & (df["macdhist"] > 0)
         cond_ema = df["ema_cross"] == 1
-        cond_session = df["session"].isin(["NY", "TOKYO", "LONDON"])
+        cond_session = df["session"].isin(["LONDON_OPEN_KZ", "LONDON_NY_KZ", "NY_CLOSE_KZ"])
 
         buy_cond = cond_rsi & cond_macd & cond_ema & cond_session
 
         if self.use_sentiment.value:
             from clawforge.integrations.deepseek import get_sentiment_score
             sentiment = get_sentiment_score(metadata["pair"])
-            if sentiment < self.sentiment_threshold.value:
-                buy_cond = False
+            # Keep buy_cond as a Series by combining sentiment check into the mask
+            cond_sentiment = sentiment >= self.sentiment_threshold.value
+            buy_cond = buy_cond & cond_sentiment
 
         df.loc[buy_cond, "buy"] = 1
         return df
@@ -98,16 +120,45 @@ class Claw5MSniper(IStrategy):
 
     @staticmethod
     def get_session(date_series: pd.Series) -> pd.Series:
-        """Map UTC hour to trading session."""
+        """Map UTC hour to crypto trading session + ICT kill zones.
+
+        Kill zones (highest probability entries):
+          LONDON_OPEN_KZ  : 07:00-09:00 UTC
+          LONDON_NY_KZ    : 13:00-16:00 UTC (highest volume)
+          NY_CLOSE_KZ     : 20:00-22:00 UTC (reversals)
+
+        Regular sessions:
+          ASIA            : 00:00-07:00 UTC (range, low volatility)
+          LONDON          : 09:00-13:00 UTC
+          NY              : 16:00-20:00 UTC
+
+        Dead zone (no trades):
+          DEAD            : 22:00-00:00 UTC
+        """
         def _session(ts):
             hour = ts.hour
-            if 0 <= hour < 8:
-                return "NY"
-            if 8 <= hour < 16:
-                return "TOKYO"
-            if 16 <= hour < 24:
-                return "LONDON"
-            return "OTHER"
+            minute = ts.minute
+            # Convert to float hour for precise boundary checks
+            h = hour + minute / 60.0
+
+            # ── Kill Zones (highest priority) ──
+            if 7.0 <= h < 9.0:
+                return "LONDON_OPEN_KZ"   # Kill zone 1
+            if 13.0 <= h < 16.0:
+                return "LONDON_NY_KZ"     # Kill zone 2 — best setups
+            if 20.0 <= h < 22.0:
+                return "NY_CLOSE_KZ"      # Kill zone 3 — reversals
+
+            # ── Regular Sessions ──
+            if 0.0 <= h < 7.0:
+                return "ASIA"             # Range, wait for London
+            if 9.0 <= h < 13.0:
+                return "LONDON"           # London mid-session
+            if 16.0 <= h < 20.0:
+                return "NY"              # NY mid-session
+
+            # ── Dead Zone ──
+            return "DEAD"               # 22:00-00:00 — no trades
         return date_series.apply(_session)
 
     @staticmethod
